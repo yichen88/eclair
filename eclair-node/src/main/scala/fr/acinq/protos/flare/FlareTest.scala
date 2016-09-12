@@ -13,7 +13,7 @@ object FlareTest extends App {
   val system = ActorSystem()
 
 
-  /*val a = system.actorOf(Props[Node], name = "a")
+  val a = system.actorOf(Props[Node], name = "a")
   val b = system.actorOf(Props[Node], name = "b")
   val c = system.actorOf(Props[Node], name = "c")
   val d = system.actorOf(Props[Node], name = "d")
@@ -22,22 +22,20 @@ object FlareTest extends App {
   a ! ('connect, b)
   a ! ('connect, c)
   c ! ('connect, d)
-  d ! ('connect, e)*/
+  d ! ('connect, e)
 
-
-
-  val nodes = for (i <- 0 until 30) yield system.actorOf(Props[Node])
+  /*val nodes = for (i <- 0 until 100000) yield system.actorOf(Props[Node])
 
   val random = new Random()
   val f = File("graph.dot").printWriter()
   f.println("digraph G {")
-  for (i <- 0 until 60) {
+  for (i <- 0 until 1000) {
     val a = nodes(random.nextInt(nodes.size))
     val b = (nodes.toSet - a).toList(random.nextInt(nodes.size - 1))
     a ! ('connect, b)
     f.println(s"""    "${a.path.name}" -> "${b.path.name}"""")
   }
   f.println("}")
-  f.close()
+  f.close()*/
 
 }

@@ -7,7 +7,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, Props}
   */
 class Node extends Actor with ActorLogging {
 
-  val neighborHandler = context.actorOf(Props(new NeighborHandler(2)), "neighbor-handler")
+  val neighborHandler = context.actorOf(Props(new NeighborHandler(2, 1)), "neighbor-handler")
 
   override def receive: Receive = {
     case ('connect, node: ActorRef) =>
