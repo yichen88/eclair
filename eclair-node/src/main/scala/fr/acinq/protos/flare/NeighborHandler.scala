@@ -49,8 +49,10 @@ class NeighborHandler(radius: Int, beaconCount: Int) extends Actor with ActorLog
       val nodes = table.channels.flatMap(c => Set(c.a, c.b)) - table.myself
       val distances = nodes.map(node => (node, distance(table.myself, node)))
       val selected = distances.toList.sortBy(_._2).map(_._1).take(beaconCount)
-      log.debug(s"sending BeaconReq message to ${selected.mkString(",")}")
-      selected.foreach(node => sendTo(node, table, adjacent, BeaconReq(table.myself, None)))
+      selected.foreach(node => {
+        log.debug(s"sending BeaconReq message to ${selected.mkString(",")}")
+        sendTo(node, table, adjacent, BeaconReq(table.myself, None))
+      })
     case msg@NeighborBeaconMessage(route, beaconMsg) =>
       route match {
         case neighbor :: rest =>
@@ -76,7 +78,7 @@ class NeighborHandler(radius: Int, beaconCount: Int) extends Actor with ActorLog
           val (table1, _) = include(table, updates, 1000)
           sendTo(origin, table1, adjacent, BeaconAck(table.myself))
           context become main(table1, adjacent, updatesBatch, beacons)
-        case _  =>
+        case _ =>
           sendTo(origin, table, adjacent, BeaconAck(table.myself))
       }
     case msg@BeaconAck(origin, alternative) =>
