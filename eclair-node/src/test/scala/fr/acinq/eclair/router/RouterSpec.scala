@@ -1,7 +1,7 @@
-package fr.acinq.eclair
+package fr.acinq.eclair.router
 
 import fr.acinq.bitcoin.BinaryData
-import fr.acinq.eclair.router.{ChannelDesc, PaymentManager, Router}
+import fr.acinq.eclair.{Globals, _}
 import lightning.route_step
 import org.junit.runner.RunWith
 import org.scalatest.FunSuite

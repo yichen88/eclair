@@ -1,15 +1,15 @@
-package fr.acinq.eclair
+package fr.acinq.eclair.router
 
 import akka.actor.FSM.{CurrentState, SubscribeTransitionCallBack, Transition}
 import akka.actor.{ActorSystem, Props, Status}
-import akka.testkit.{TestFSMRef, TestKit, TestProbe}
+import akka.testkit.{TestKit, TestProbe}
 import fr.acinq.bitcoin.BinaryData
+import fr.acinq.eclair.Globals
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.router._
 import lightning.sha256_hash
 import org.junit.runner.RunWith
-import org.scalatest.{BeforeAndAfterAll, FunSuiteLike}
 import org.scalatest.junit.JUnitRunner
+import org.scalatest.{BeforeAndAfterAll, FunSuiteLike}
 
 /**
   * Created by PM on 29/08/2016.

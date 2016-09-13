@@ -19,7 +19,7 @@ message sha256_hash {
 }
 
 message rval {
-  option (scalapb.message).extends = "lightning.RvalToString";  
+  option (scalapb.message).extends = "lightning.RvalToString";
   required fixed64 a = 1;
   required fixed64 b = 2;
   required fixed64 c = 3;
@@ -221,6 +221,69 @@ message error {
   optional string problem = 1;
 }
 
+message channel_desc {
+  required sha256_hash channel_id = 1;
+  required bitcoin_pubkey node_a = 2;
+  required bitcoin_pubkey node_b = 3;
+}
+
+message routing_table {
+  repeated channel_desc channels = 1;
+}
+
+message neighbor_hello {
+  required routing_table routing_table = 1;
+}
+
+message routing_table_update {
+  required channel_desc channel = 1;
+  enum update_type {
+    OPEN = 1;
+    CLOSE = 2;
+  }
+  required update_type type = 4;
+}
+
+message neighbor_update {
+  repeated routing_table_update updates = 1;
+}
+
+message neighbor_reset {
+}
+
+message beacon_req {
+  required bitcoin_pubkey origin = 1;
+  // so that they can find a route back to me
+  repeated channel_desc channels = 3;
+}
+
+message beacon_ack {
+  required bitcoin_pubkey origin = 1;
+  // optional better candidate
+  optional bitcoin_pubkey alternative = 2;
+  // so that they can find a route to the candidate
+  repeated channel_desc channels = 3;
+}
+
+message beacon_set {
+  required bitcoin_pubkey origin = 1;
+}
+
+message beacon_forward {
+  required bitcoin_pubkey node = 1;
+  required neighbor_onion onion = 2;
+}
+
+message neighbor_onion {
+  // Where to next?
+  oneof next {
+    beacon_req req = 1;
+    beacon_ack ack = 2;
+    beacon_set set = 3;
+    beacon_forward forward = 4;
+  }
+}
+
 // This is the union which defines all of them
 message pkt {
   oneof pkt {
@@ -247,5 +310,11 @@ message pkt {
 
     // Unexpected issue.
     error error = 40;
+
+    // Gossip
+    neighbor_hello neighbor_hello = 60;
+    neighbor_update neighbor_update = 61;
+    neighbor_reset neighbor_reset = 62;
+    neighbor_onion neighbor_onion = 63;
   }
 }

@@ -38,7 +38,7 @@ case object IO_NORMAL extends State
 
 // @formatter:on
 
-class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, our_params: OurChannelParams) extends LoggingFSM[State, Data] with Stash {
+class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, flareNeighborHandler: ActorRef, our_params: OurChannelParams) extends LoggingFSM[State, Data] with Stash {
 
   val session_key = randomKeyPair()
 
@@ -153,6 +153,10 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
         case CloseShutdown(o) => channel ! o
         case CloseSignature(o) => channel ! o
         case Error(o) => channel ! o
+        case NeighborHello(o) => flareNeighborHandler ! o
+        case NeighborUpdate(o) => flareNeighborHandler ! o
+        case NeighborReset(o) => flareNeighborHandler ! o
+        case NeighborOnion(o) => flareNeighborHandler ! o
       }
       stay
 
@@ -170,6 +174,10 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
         case o: close_shutdown => pkt(CloseShutdown(o))
         case o: close_signature => pkt(CloseSignature(o))
         case o: error => pkt(Error(o))
+        case o: neighbor_hello => pkt(NeighborHello(o))
+        case o: neighbor_update => pkt(NeighborUpdate(o))
+        case o: neighbor_reset => pkt(NeighborReset(o))
+        case o: neighbor_onion => pkt(NeighborOnion(o))
       }
       log.debug(s"sending $packet")
       val encryptor1 = send(encryptor, packet)
@@ -194,7 +202,7 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
 
 object AuthHandler {
 
-  def props(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, our_params: OurChannelParams) = Props(new AuthHandler(them, blockchain, paymentHandler, our_params))
+  def props(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, flareNeighborHandler: ActorRef, our_params: OurChannelParams) = Props(new AuthHandler(them, blockchain, paymentHandler, flareNeighborHandler, our_params))
 
   case class Secrets(aes_key: BinaryData, hmac_key: BinaryData, aes_iv: BinaryData)
 
