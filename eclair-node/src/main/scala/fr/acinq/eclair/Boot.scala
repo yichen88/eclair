@@ -36,7 +36,7 @@ class FakeBitcoinClient()(implicit system: ActorSystem) extends ExtendedBitcoinC
   client.client.close()
 
   import scala.concurrent.ExecutionContext.Implicits.global
-  system.scheduler.schedule(100 milliseconds, 100 milliseconds, new Runnable {
+  system.scheduler.schedule(3 seconds, 3 seconds, new Runnable {
     override def run(): Unit = system.eventStream.publish(NewBlock(null)) // blocks are not actually interpreted
   })
 
