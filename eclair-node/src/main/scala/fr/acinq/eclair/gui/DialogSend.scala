@@ -1,5 +1,6 @@
 package fr.acinq.eclair.gui
 
+import java.util.Base64
 import javafx.event.{ActionEvent, EventHandler}
 import javafx.geometry.{Insets, Pos}
 import javafx.scene.{Node, Scene}
@@ -42,8 +43,8 @@ class DialogSend(primaryStage: Stage, handlers: Handlers) extends Stage() {
   val btn = new Button("Send")
   btn.setOnAction(new EventHandler[ActionEvent] {
     override def handle(event: ActionEvent): Unit = {
-      val Array(nodeId, amount, hash) = textAreaPaymentRequest.getText.split(":")
-      handlers.send(nodeId, hash, amount)
+      val paymentRequest = lightning.payment_request.parseFrom(Base64.getDecoder().decode(textAreaPaymentRequest.getText))
+      handlers.send(paymentRequest)
       event.getSource.asInstanceOf[Node].getScene.getWindow.hide()
     }
   })

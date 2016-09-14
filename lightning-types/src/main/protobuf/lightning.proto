@@ -318,3 +318,11 @@ message pkt {
     neighbor_onion neighbor_onion = 63;
   }
 }
+
+message payment_request {
+  required bitcoin_pubkey node_id = 1;
+  required uint64 amount_msat = 2;
+  required sha256_hash hash = 3;
+  required routing_table routing_table = 4;
+}
+

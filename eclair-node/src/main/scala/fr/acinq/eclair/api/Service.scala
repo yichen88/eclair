@@ -1,5 +1,7 @@
 package fr.acinq.eclair.api
 
+import java.util.Base64
+
 import akka.actor.ActorRef
 import akka.http.scaladsl.model.headers.RawHeader
 import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpResponse, StatusCodes}
@@ -79,8 +81,19 @@ trait Service extends Logging {
                 (router ? 'beacons).mapTo[Iterable[BinaryData]]
               case JsonRPCBody(_, _, "addhtlc", JInt(amount) :: JString(rhash) :: JString(nodeId) :: Nil) =>
                 (paymentSpawner ? CreatePayment(amount.toInt, BinaryData(rhash), BinaryData(nodeId), null)).mapTo[ChannelEvent]
+              case JsonRPCBody(_, _, "pay", JString(base64) :: Nil) =>
+                val paymentRequest = lightning.payment_request.parseFrom(Base64.getDecoder().decode(base64))
+                (paymentSpawner ? CreatePayment(paymentRequest.amountMsat.toInt, paymentRequest.hash, paymentRequest.nodeId, paymentRequest.routingTable)).mapTo[ChannelEvent]
               case JsonRPCBody(_, _, "genh", _) =>
                 (paymentHandler ? 'genh).mapTo[BinaryData]
+              case JsonRPCBody(_, _, "genpaymentrequest", JInt(amount) :: Nil) =>
+                val future1 = (paymentHandler ? 'genh).mapTo[BinaryData]
+                val future2 = (router ? 'network).mapTo[Seq[channel_desc]]
+                val future3 = for {
+                  h <- future1
+                  channels <- future2
+                } yield lightning.payment_request(Globals.Node.publicKey, amount.toLong, h, lightning.routing_table(channels))
+                future3.map(r => Base64.getEncoder.encodeToString(r.toByteArray))
               case JsonRPCBody(_, _, "sign", JString(channel) :: Nil) =>
                 (register ? SendCommand(channel, CMD_SIGN)).mapTo[ActorRef].map(_ => "ok")
               case JsonRPCBody(_, _, "fulfillhtlc", JString(channel) :: JDouble(id) :: JString(r) :: Nil) =>

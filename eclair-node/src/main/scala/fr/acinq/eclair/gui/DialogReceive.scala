@@ -45,8 +45,8 @@ class DialogReceive(primaryStage: Stage, handlers: Handlers) extends Stage() {
 
   val textAreaPaymentRequest = new TextArea()
   textAreaPaymentRequest.setWrapText(true)
-  textAreaPaymentRequest.setPrefRowCount(2)
-  textAreaPaymentRequest.setPrefColumnCount(40)
+  textAreaPaymentRequest.setPrefRowCount(3)
+  textAreaPaymentRequest.setPrefColumnCount(50)
   textAreaPaymentRequest.setEditable(false)
   grid.add(textAreaPaymentRequest, 1, 2)
 

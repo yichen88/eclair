@@ -6,6 +6,7 @@ import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.http.scaladsl.Http
 import akka.util.Timeout
 import akka.stream.ActorMaterializer
+import akka.pattern.ask
 import com.typesafe.config.ConfigFactory
 import fr.acinq.eclair.api.Service
 import fr.acinq.eclair.blockchain.{ExtendedBitcoinClient, PeerWatcher}
@@ -13,9 +14,9 @@ import fr.acinq.eclair.channel._
 import fr.acinq.eclair.io.{Client, Server}
 import grizzled.slf4j.Logging
 
-import scala.concurrent.{Await, ExecutionContext}
+import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._
-import fr.acinq.bitcoin.{BitcoinJsonRPCClient, Satoshi}
+import fr.acinq.bitcoin.{BinaryData, BitcoinJsonRPCClient, Satoshi}
 import fr.acinq.eclair.blockchain.peer.PeerClient
 import fr.acinq.eclair.gui.MainWindow
 import fr.acinq.eclair.router._
