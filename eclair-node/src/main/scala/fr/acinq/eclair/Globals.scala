@@ -2,8 +2,9 @@ package fr.acinq.eclair
 
 import com.typesafe.config.ConfigFactory
 import fr.acinq.bitcoin.{BinaryData, DeterministicWallet}
+import fr.acinq.eclair.crypto.LightningCrypto
 import lightning.locktime
-import lightning.locktime.Locktime.{Blocks}
+import lightning.locktime.Locktime.Blocks
 
 import scala.concurrent.duration._
 
@@ -15,7 +16,7 @@ object Globals {
   val config = ConfigFactory.load()
 
   object Node {
-    val seed: BinaryData = config.getString("eclair.node.seed")
+    val seed: BinaryData = LightningCrypto.randomKeyPair().priv
     val master = DeterministicWallet.generate(seed)
     val extendedPrivateKey = DeterministicWallet.derivePrivateKey(master, DeterministicWallet.hardened(46) :: DeterministicWallet.hardened(0) :: Nil)
     val privateKey = extendedPrivateKey.secretkey
