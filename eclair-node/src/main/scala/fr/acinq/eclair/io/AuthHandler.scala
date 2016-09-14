@@ -38,7 +38,7 @@ case object IO_NORMAL extends State
 
 // @formatter:on
 
-class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, flareNeighborHandler: ActorRef, our_params: OurChannelParams) extends LoggingFSM[State, Data] with Stash {
+class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef, our_params: OurChannelParams) extends LoggingFSM[State, Data] with Stash {
 
   val session_key = randomKeyPair()
 
@@ -153,10 +153,10 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
         case CloseShutdown(o) => channel ! o
         case CloseSignature(o) => channel ! o
         case Error(o) => channel ! o
-        case NeighborHello(o) => flareNeighborHandler ! o
-        case NeighborUpdate(o) => flareNeighborHandler ! o
-        case NeighborReset(o) => flareNeighborHandler ! o
-        case NeighborOnion(o) => flareNeighborHandler ! o
+        case NeighborHello(o) => router ! o
+        case NeighborUpdate(o) => router ! o
+        case NeighborReset(o) => router ! o
+        case NeighborOnion(o) => router ! o
       }
       stay
 
@@ -202,7 +202,7 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
 
 object AuthHandler {
 
-  def props(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, flareNeighborHandler: ActorRef, our_params: OurChannelParams) = Props(new AuthHandler(them, blockchain, paymentHandler, flareNeighborHandler, our_params))
+  def props(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef, our_params: OurChannelParams) = Props(new AuthHandler(them, blockchain, paymentHandler, router, our_params))
 
   case class Secrets(aes_key: BinaryData, hmac_key: BinaryData, aes_iv: BinaryData)
 

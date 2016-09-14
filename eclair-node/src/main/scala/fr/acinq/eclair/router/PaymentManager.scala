@@ -32,7 +32,7 @@ case object WAITING_FOR_PAYMENT_COMPLETE extends State
 /**
   * Created by PM on 26/08/2016.
   */
-class PaymentManager(flareNeighborHandler: ActorRef, selector: ActorRef, initialBlockCount: Long) extends LoggingFSM[State, Data] {
+class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Long) extends LoggingFSM[State, Data] {
 
   import PaymentManager._
 
@@ -42,7 +42,7 @@ class PaymentManager(flareNeighborHandler: ActorRef, selector: ActorRef, initial
 
   when(WAITING_FOR_REQUEST) {
     case Event(c: CreatePayment, WaitingForRequest(currentBlockCount)) =>
-      flareNeighborHandler ! RouteRequest(c.targetNodeId, c.table)
+      router ! RouteRequest(c.targetNodeId, c.table)
       goto(WAITING_FOR_ROUTE) using WaitingForRoute(sender, c, currentBlockCount)
 
     case Event(CurrentBlockCount(currentBlockCount), d: WaitingForRequest) =>
@@ -97,7 +97,7 @@ class PaymentManager(flareNeighborHandler: ActorRef, selector: ActorRef, initial
 
 object PaymentManager {
 
-  def props(flareNeighborHandler: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(classOf[PaymentManager], flareNeighborHandler, selector, initialBlockCount)
+  def props(router: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(classOf[PaymentManager], router, selector, initialBlockCount)
 
   def buildRoute(finalAmountMsat: Int, nodeIds: Seq[BinaryData]): lightning.route = {
 
