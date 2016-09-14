@@ -13,6 +13,7 @@ import fr.acinq.eclair._
 import fr.acinq.eclair.channel.Register.{ListChannels, SendCommand}
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.CreatePayment
+import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
 import grizzled.slf4j.Logging
 import lightning.channel_desc
 import org.json4s.JsonAST.JString
@@ -94,6 +95,9 @@ trait Service extends Logging {
                   channels <- future2
                 } yield lightning.payment_request(Globals.Node.publicKey, amount.toLong, h, lightning.routing_table(channels))
                 future3.map(r => Base64.getEncoder.encodeToString(r.toByteArray))
+              case JsonRPCBody(_, _, "findroute", JString(base64) :: Nil) =>
+                val paymentRequest = lightning.payment_request.parseFrom(Base64.getDecoder.decode(base64))
+                (router ? RouteRequest(paymentRequest.nodeId, paymentRequest.routingTable)).mapTo[RouteResponse]
               case JsonRPCBody(_, _, "sign", JString(channel) :: Nil) =>
                 (register ? SendCommand(channel, CMD_SIGN)).mapTo[ActorRef].map(_ => "ok")
               case JsonRPCBody(_, _, "fulfillhtlc", JString(channel) :: JDouble(id) :: JString(r) :: Nil) =>
