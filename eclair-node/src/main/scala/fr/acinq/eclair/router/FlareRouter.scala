@@ -155,10 +155,6 @@ object FlareRouter {
   case class RouteResponse(route: Seq[BinaryData])
   // @formatter:on
 
-  //case class RoutingTable(myself: String, channels: Set[ChannelDesc]) {
-  //  override def toString: String = s"[$myself] " + channels.toList.sortBy(_.a).map(c => s"${c.a}->${c.b}").mkString(" ")
-  //}
-
   def graph2table(graph: SimpleGraph[BinaryData, NamedEdge]): routing_table = {
     val channels = graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge)))
     routing_table(channels.toSeq)
@@ -170,7 +166,8 @@ object FlareRouter {
   }
 
   def include(myself: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], updates: Seq[routing_table_update], radius: Int): (SimpleGraph[BinaryData, NamedEdge], Seq[routing_table_update]) = {
-    val origChannels = graph.edgeSet().map(_.id)
+    val origChannels = graph.edgeSet().map(_.id).toSet
+    val origVertices = graph.vertexSet().toSet
     updates.collect {
       case routing_table_update(channel, OPEN) =>
         graph.addVertex(channel.nodeA)
@@ -179,7 +176,8 @@ object FlareRouter {
       case routing_table_update(channel, CLOSE) =>
         graph.removeEdge(NamedEdge(channel.channelId))
     }
-    val distances = graph.vertexSet().collect {
+    // TODO : careful this won't work as soon as we receive CLOSE updates
+    val distances = (graph.vertexSet() -- origVertices - myself).collect {
       case vertex: BinaryData if vertex != myself => (vertex, Try(new DijkstraShortestPath(graph, myself, vertex).getPath.getEdgeList.size()))
     }
     distances.collect {
