@@ -2,7 +2,7 @@ package fr.acinq.eclair.router
 
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
-import fr.acinq.eclair.router.FlareNeighborHandler._
+import fr.acinq.eclair.router.FlareRouter._
 import lightning.neighbor_onion.Next.{Forward, Req}
 import lightning._
 import lightning.routing_table_update.update_type.OPEN
@@ -15,7 +15,7 @@ import org.scalatest.junit.JUnitRunner
   * Created by PM on 09/09/2016.
   */
 @RunWith(classOf[JUnitRunner])
-class FlareNeighborHandlerSpec extends FunSuite {
+class FlareRouterSpec extends FunSuite {
 
   test("add channel") {
     val myself = BinaryData("01")
@@ -48,6 +48,19 @@ class FlareNeighborHandlerSpec extends FunSuite {
     val msg = neighbor_onion(Req(beacon_req(BinaryData("01"))))
     val onion = buildOnion(BinaryData("03") :: BinaryData("04") :: Nil, msg)
     assert(onion == neighbor_onion(Forward(beacon_forward(BinaryData("03"), neighbor_onion(Forward(beacon_forward(BinaryData("04"), msg)))))))
+  }
+
+  test("graph clone") {
+    val g1 = new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge])
+    g1.addVertex(BinaryData("01"))
+    g1.addVertex(BinaryData("02"))
+    g1.addVertex(BinaryData("03"))
+    g1.addEdge(BinaryData("01"), BinaryData("02"), NamedEdge("0102"))
+    g1.addEdge(BinaryData("02"), BinaryData("03"), NamedEdge("0203"))
+
+    val g2 = g1.clone()
+    assert(g1 == g2)
+
   }
 
 }

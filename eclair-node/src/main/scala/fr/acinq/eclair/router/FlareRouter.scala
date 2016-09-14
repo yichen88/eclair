@@ -3,6 +3,7 @@ package fr.acinq.eclair.router
 import java.math.BigInteger
 
 import akka.actor.{Actor, ActorLogging, ActorSelection, Props}
+import akka.pattern._
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel.{ChannelChangedState, DATA_NORMAL, NORMAL}
@@ -14,13 +15,14 @@ import org.jgrapht.alg.DijkstraShortestPath
 import org.jgrapht.graph.{DefaultEdge, SimpleGraph}
 
 import scala.collection.JavaConversions._
+import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 
 /**
   * Created by PM on 08/09/2016.
   */
-class FlareNeighborHandler(radius: Int, beaconCount: Int) extends Actor with ActorLogging {
+class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging {
 
   context.system.eventStream.subscribe(self, classOf[ChannelChangedState])
 
@@ -28,7 +30,7 @@ class FlareNeighborHandler(radius: Int, beaconCount: Int) extends Actor with Act
 
   context.system.scheduler.schedule(10 seconds, 1 minute, self, 'tick_beacons)
 
-  import FlareNeighborHandler._
+  import FlareRouter._
 
   val myself = Globals.Node.publicKey
 
@@ -124,17 +126,27 @@ class FlareNeighborHandler(radius: Int, beaconCount: Int) extends Actor with Act
       }
     case msg@beacon_set(origin) =>
       log.info(s"I am the beacon of $origin")
-    case msg => log.warning(s"unhandled $msg")
+    case RouteRequest(target, targetTable) =>
+      val g1 = graph.clone().asInstanceOf[SimpleGraph[BinaryData, NamedEdge]]
+      val g2 = merge(myself, g1, targetTable, 100)
+      Future(findRoute(g2, myself, target)) map (r => RouteResponse(r._2)) pipeTo sender
+    case 'network =>
+      sender ! graph2table(graph).channels
   }
 
 }
 
 
-object FlareNeighborHandler {
+object FlareRouter {
 
-  def props(radius: Int, beaconCount: Int) = Props(classOf[FlareNeighborHandler], radius, beaconCount)
+  def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], radius, beaconCount)
 
   case class NamedEdge(val id: BinaryData) extends DefaultEdge
+
+  // @formatter:off
+  case class RouteRequest(target: BinaryData, targetTable: routing_table)
+  case class RouteResponse(route: Seq[BinaryData])
+  // @formatter:on
 
   //case class RoutingTable(myself: String, channels: Set[ChannelDesc]) {
   //  override def toString: String = s"[$myself] " + channels.toList.sortBy(_.a).map(c => s"${c.a}->${c.b}").mkString(" ")

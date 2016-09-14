@@ -1,7 +1,6 @@
 package fr.acinq.eclair.gui
 
 import javafx.application.Platform
-import javafx.embed.swing.SwingNode
 import javafx.event.{ActionEvent, EventHandler}
 import javafx.geometry.Orientation
 import javafx.scene.control.Separator
@@ -11,9 +10,11 @@ import akka.actor.{Actor, ActorLogging, ActorRef}
 import com.mxgraph.layout.mxCircleLayout
 import com.mxgraph.swing.mxGraphComponent
 import fr.acinq.bitcoin.BinaryData
-import fr.acinq.eclair.{Globals, Setup}
+import fr.acinq.eclair._
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.router.{ChannelDesc, ChannelDiscovered}
+import fr.acinq.eclair.router.ChannelDiscovered
+import fr.acinq.eclair.{Globals, Setup}
+import lightning.channel_desc
 import org.jgrapht.ext.JGraphXAdapter
 import org.jgrapht.graph.{DefaultEdge, SimpleGraph}
 
@@ -79,9 +80,9 @@ class GUIUpdater(primaryStage: Stage, helloWorld: MainWindow, setup: Setup) exte
         }
       })
 
-    case ChannelDiscovered(ChannelDesc(id, a, b)) =>
-      graph.addVertex(BinaryData(a))
-      graph.addVertex(BinaryData(b))
+    case ChannelDiscovered(channel_desc(id, a, b)) =>
+      graph.addVertex(pubkey2bin(a))
+      graph.addVertex(pubkey2bin(b))
       graph.addEdge(a, b, new NamedEdge(id))
       val jgxAdapter = new JGraphXAdapter(graph)
       Platform.runLater(new Runnable() {

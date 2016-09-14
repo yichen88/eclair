@@ -21,7 +21,7 @@ class PaymentFSMSpec extends TestKit(ActorSystem("test")) with FunSuiteLike with
     TestKit.shutdownActorSystem(system)
   }
 
-  test("route not available") {
+  /*test("route not available") {
     val router = system.actorOf(Props[Router])
     val selector = system.actorOf(Props[ChannelSelector])
     val channel00 = TestProbe()
@@ -116,6 +116,6 @@ class PaymentFSMSpec extends TestKit(ActorSystem("test")) with FunSuiteLike with
     channel01.expectMsgType[CMD_ADD_HTLC]
     sender.send(paymentFsm, PaymentFailed(channel01.ref, req.h, "some reason"))
     sender.expectMsgType[Status.Failure]
-  }
+  }*/
 
 }

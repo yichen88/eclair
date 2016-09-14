@@ -6,13 +6,14 @@ import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.peer.CurrentBlockCount
 import fr.acinq.eclair.channel.{CMD_ADD_HTLC, PaymentFailed, PaymentSent}
+import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
 import lightning.locktime.Locktime.Blocks
 import lightning.route_step.Next
-import lightning.{locktime, route_step, sha256_hash}
+import lightning.{locktime, route_step, routing_table, sha256_hash}
 
 // @formatter:off
 
-case class CreatePayment(amountMsat: Int, h: sha256_hash, targetNodeId: BinaryData)
+case class CreatePayment(amountMsat: Int, h: sha256_hash, targetNodeId: BinaryData, table: routing_table)
 
 sealed trait Data
 case class WaitingForRequest(currentBlockCount: Long) extends Data
@@ -31,7 +32,7 @@ case object WAITING_FOR_PAYMENT_COMPLETE extends State
 /**
   * Created by PM on 26/08/2016.
   */
-class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Long) extends LoggingFSM[State, Data] {
+class PaymentManager(flareNeighborHandler: ActorRef, selector: ActorRef, initialBlockCount: Long) extends LoggingFSM[State, Data] {
 
   import PaymentManager._
 
@@ -41,7 +42,7 @@ class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
 
   when(WAITING_FOR_REQUEST) {
     case Event(c: CreatePayment, WaitingForRequest(currentBlockCount)) =>
-      router ! RouteRequest(Globals.Node.publicKey, c.targetNodeId)
+      flareNeighborHandler ! RouteRequest(c.targetNodeId, c.table)
       goto(WAITING_FOR_ROUTE) using WaitingForRoute(sender, c, currentBlockCount)
 
     case Event(CurrentBlockCount(currentBlockCount), d: WaitingForRequest) =>
@@ -96,7 +97,7 @@ class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
 
 object PaymentManager {
 
-  def props(router: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(classOf[PaymentManager], router, selector, initialBlockCount)
+  def props(flareNeighborHandler: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(classOf[PaymentManager], flareNeighborHandler, selector, initialBlockCount)
 
   def buildRoute(finalAmountMsat: Int, nodeIds: Seq[BinaryData]): lightning.route = {
 

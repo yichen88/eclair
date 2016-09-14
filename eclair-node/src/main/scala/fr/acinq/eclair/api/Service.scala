@@ -3,24 +3,24 @@ package fr.acinq.eclair.api
 import akka.actor.ActorRef
 import akka.http.scaladsl.model.headers.RawHeader
 import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpResponse, StatusCodes}
-import akka.util.Timeout
 import akka.http.scaladsl.server.Directives._
+import akka.pattern.ask
+import akka.util.Timeout
 import fr.acinq.bitcoin.{BinaryData, Satoshi}
 import fr.acinq.eclair._
+import fr.acinq.eclair.channel.Register.{ListChannels, SendCommand}
 import fr.acinq.eclair.channel._
+import fr.acinq.eclair.router.CreatePayment
 import grizzled.slf4j.Logging
+import lightning.channel_desc
 import org.json4s.JsonAST.JString
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 import org.json4s.jackson.Serialization
 
+import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success}
-import akka.pattern.ask
-import fr.acinq.eclair.channel.Register.{ListChannels, SendCommand}
-import fr.acinq.eclair.router.{ChannelDesc, CreatePayment}
-
-import scala.concurrent.duration._
 
 /**
   * Created by PM on 25/01/2016.
@@ -74,9 +74,9 @@ trait Service extends Logging {
                 (register ? ListChannels).mapTo[Iterable[ActorRef]]
                   .flatMap(l => Future.sequence(l.map(c => c ? CMD_GETINFO)))
               case JsonRPCBody(_, _, "network", _) =>
-                (router ? 'network).mapTo[Iterable[ChannelDesc]]
+                (router ? 'network).mapTo[Iterable[channel_desc]]
               case JsonRPCBody(_, _, "addhtlc", JInt(amount) :: JString(rhash) :: JString(nodeId) :: Nil) =>
-                (paymentSpawner ? CreatePayment(amount.toInt, BinaryData(rhash), BinaryData(nodeId))).mapTo[ChannelEvent]
+                (paymentSpawner ? CreatePayment(amount.toInt, BinaryData(rhash), BinaryData(nodeId), null)).mapTo[ChannelEvent]
               case JsonRPCBody(_, _, "genh", _) =>
                 (paymentHandler ? 'genh).mapTo[BinaryData]
               case JsonRPCBody(_, _, "sign", JString(channel) :: Nil) =>

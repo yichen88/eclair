@@ -58,17 +58,16 @@ class Setup extends Logging {
     case "local" => system.actorOf(Props[LocalPaymentHandler], name = "payment-handler")
     case "noop" => system.actorOf(Props[NoopPaymentHandler], name = "payment-handler")
   }
-  val flareNeighborHandler = system.actorOf(FlareNeighborHandler.props(config.getInt("eclair.flare.radius"), config.getInt("eclair.flare.beacon-count")), name = "neighbor-handler")
+  val flareNeighborHandler = system.actorOf(FlareRouter.props(config.getInt("eclair.flare.radius"), config.getInt("eclair.flare.beacon-count")), name = "neighbor-handler")
   val register = system.actorOf(Register.props(watcher, paymentHandler, flareNeighborHandler), name = "register")
   val selector = system.actorOf(Props[ChannelSelector], name = "selector")
-  val router = system.actorOf(Props[Router], name = "router")
-  val paymentSpawner = system.actorOf(PaymentSpawner.props(router, selector, blockCount), "payment-spawner")
+  val paymentSpawner = system.actorOf(PaymentSpawner.props(flareNeighborHandler, selector, blockCount), "payment-spawner")
   val server = system.actorOf(Server.props(config.getString("eclair.server.host"), config.getInt("eclair.server.port"), register), "server")
 
   val _setup = this
   val api = new Service {
     override val register: ActorRef = _setup.register
-    override val router: ActorRef = _setup.router
+    //override val router: ActorRef = _setup.router
     override val paymentHandler: ActorRef = _setup.paymentHandler
     override val paymentSpawner: ActorRef = _setup.paymentSpawner
 
