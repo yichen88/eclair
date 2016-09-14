@@ -87,29 +87,31 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val nodes: Set[BinaryData] = graph.vertexSet().toSet - origin
       val distances = nodes.map(node => (node, distance(origin, node)))
       val selected = distances.toList.sortBy(_._2).map(_._1)
+
+      // adding routes to my table so that I can reply to the origin
+      val updates = channels.map(channelDesc => routing_table_update(channelDesc, OPEN)).toList
+      // large radius so that we don't prune the beacon (it's ok if it is remote)
+      val (graph1, _) = include(myself, graph, updates, 1000)
+
       selected.headOption match {
         case Some(node) if node != myself =>
-          // we reply with a better beacon
-          val (channels, _) = findRoute(graph, myself, node)
-          val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Ack(beacon_ack(myself, Some(node), channels))))
+          log.debug(s"let's recommend beacon $node to $origin")
+          // we reply with a better beacon and give them a route
+          val (channels, _) = findRoute(graph1, myself, node)
+          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, Some(node), channels))))
           adjacent(channelId)._2 ! onion
-        case _ if channels != Nil =>
-          // adding routes to my table so that I can reply to the origin
-          val updates = channels.map(channelDesc => routing_table_update(channelDesc, OPEN)).toList
-          // large radius so that we don't prune the beacon (it's ok if it is remote)
-          val (graph1, _) = include(myself, graph, updates, 1000)
-          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself))))
-          adjacent(channelId)._2 ! onion
-          context become main(graph1, adjacent, updatesBatch, beacons)
         case _ =>
+          // we accept to be their beacon
           val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Ack(beacon_ack(myself))))
           adjacent(channelId)._2 ! onion
       }
+      // TODO : we should not store the path to them here, but at beacon_set reception (no way to know if they will choose us)
+      context become main(graph1, adjacent, updatesBatch, beacons)
     case msg@beacon_ack(origin, alternative_opt, channels) =>
       log.debug(s"received $msg from $origin")
       alternative_opt match {
         case None =>
-          log.info(s"$origin is my beacon")
+          log.info(s"choosing $origin as my beacon")
           val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Next.Set(beacon_set(myself))))
           adjacent(channelId)._2 ! onion
           context become main(graph, adjacent, updatesBatch, beacons + origin)
