@@ -75,6 +75,8 @@ trait Service extends Logging {
                   .flatMap(l => Future.sequence(l.map(c => c ? CMD_GETINFO)))
               case JsonRPCBody(_, _, "network", _) =>
                 (router ? 'network).mapTo[Iterable[channel_desc]]
+              case JsonRPCBody(_, _, "beacons", _) =>
+                (router ? 'beacons).mapTo[Iterable[BinaryData]]
               case JsonRPCBody(_, _, "addhtlc", JInt(amount) :: JString(rhash) :: JString(nodeId) :: Nil) =>
                 (paymentSpawner ? CreatePayment(amount.toInt, BinaryData(rhash), BinaryData(nodeId), null)).mapTo[ChannelEvent]
               case JsonRPCBody(_, _, "genh", _) =>

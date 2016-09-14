@@ -132,6 +132,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       Future(findRoute(g2, myself, target)) map (r => RouteResponse(r._2)) pipeTo sender
     case 'network =>
       sender ! graph2table(graph).channels
+    case 'beacons =>
+      sender ! beacons.map(pubkey2bin)
   }
 
 }
