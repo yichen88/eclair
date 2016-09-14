@@ -34,9 +34,9 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   val myself = Globals.Node.publicKey
 
-  override def receive: Receive = main(new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge]), Map(), Nil, Nil)
+  override def receive: Receive = main(new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge]), Map(), Nil, Set())
 
-  def main(graph: SimpleGraph[BinaryData, NamedEdge], adjacent: Map[BinaryData, (channel_desc, ActorSelection)], updatesBatch: List[routing_table_update], beacons: List[bitcoin_pubkey]): Receive = {
+  def main(graph: SimpleGraph[BinaryData, NamedEdge], adjacent: Map[BinaryData, (channel_desc, ActorSelection)], updatesBatch: List[routing_table_update], beacons: Set[bitcoin_pubkey]): Receive = {
     case ChannelChangedState(channel, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
       val neighbor = context.actorSelection(channel.path.parent)
       // TODO : should we include the channel just created in the table?
@@ -112,7 +112,12 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           log.info(s"$origin is my beacon")
           val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Next.Set(beacon_set(myself))))
           adjacent(channelId)._2 ! onion
-          context become main(graph, adjacent, updatesBatch, beacons :+ origin)
+          context become main(graph, adjacent, updatesBatch, beacons + origin)
+        case Some(beacon) if beacons.contains(beacon) =>
+          log.info(s"they proposed $beacon, but we already have him, so I keep $origin as my beacon")
+          val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Next.Set(beacon_set(myself))))
+          adjacent(channelId)._2 ! onion
+          context become main(graph, adjacent, updatesBatch, beacons + origin)
         case Some(beacon) =>
           log.debug(s"looks like there is a better beacon $beacon")
           // adding routes to my table so that I can reach the beacon candidate later
