@@ -98,7 +98,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
         case Some(node) if node != myself =>
           log.debug(s"let's recommend beacon $node to $origin")
           // we reply with a better beacon and give them a route
-          val (channels, _) = findRoute(graph1, myself, node)
+          // TODO : check that we are in this route ? (incentive)
+          val (channels, _) = findRoute(graph1, origin, node)
           val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, Some(node), channels))))
           adjacent(channelId)._2 ! onion
         case _ =>
