@@ -69,7 +69,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val selected = distances.toList.sortBy(_._2).map(_._1).take(beaconCount)
       selected.foreach(node => {
         log.debug(s"sending BeaconReq message to ${selected.mkString(",")}")
-        val (channelId, onion) = prepareSend(myself, node, graph, neighbor_onion(Req(beacon_req(myself))))
+        val (channels1, _) = findRoute(graph, myself, node)
+        val (channelId, onion) = prepareSend(myself, node, graph, neighbor_onion(Req(beacon_req(myself, channels1))))
         adjacent(channelId)._2 ! onion
       })
     case msg@neighbor_onion(onion) =>
