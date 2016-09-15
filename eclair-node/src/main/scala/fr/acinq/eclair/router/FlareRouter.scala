@@ -43,7 +43,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val channelDesc = channel_desc(d.commitments.anchorId, Globals.Node.publicKey, theirNodeId)
       val updates = routing_table_update(channelDesc, OPEN) :: Nil
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
-      log.info(s"graph is now ${graph2string(graph1)}")
+      log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
       // TODO : we should normally regularly check for new beacons
       context.system.scheduler.scheduleOnce(1 minute, self, 'tick_beacons)
@@ -54,7 +54,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
     case msg@neighbor_update(updates) =>
       log.debug(s"received $msg from $sender")
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
-      log.info(s"graph is now ${graph2string(graph1)}")
+      log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
       context become main(graph1, adjacent, updatesBatch ++ updates1, beacons)
     case msg@neighbor_reset() =>
@@ -95,13 +95,22 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val (graph1, _) = include(myself, graph, updates, 100, Set())
       // TODO : we should check that origin has not been pruned
       selected.headOption match {
-        case Some(node) if node != myself =>
-          log.debug(s"let's recommend beacon $node to $origin")
+        case Some(alternate) if alternate != myself =>
+
           // we reply with a better beacon and give them a route
           // TODO : check that we are in this route ? (incentive)
-          val (channels, _) = findRoute(graph1, origin, node)
-          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, Some(node), channels))))
-          adjacent(channelId)._2 ! onion
+          val (channels, _) = findRoute(graph1, origin, alternate)
+          val hops = channels.size
+          if (hops < 100) {
+            log.debug(s"recommending alternate $alternate to $origin (hops=$hops)")
+            val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels))))
+            adjacent(channelId)._2 ! onion
+          } else {
+            log.debug(s"alternate $alternate was better but it is too far from $origin (hops=$hops)")
+            val (channels, _) = findRoute(graph1, myself, origin)
+            val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Ack(beacon_ack(myself, None, channels))))
+            adjacent(channelId)._2 ! onion
+          }
         case _ =>
           // we accept to be their beacon
           val (channels, _) = findRoute(graph1, myself, origin)
@@ -121,9 +130,10 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           val (channels1, _) = findRoute(graph1, myself, alternative)
           val (channelId1, onion1) = prepareSend(myself, alternative, graph1, neighbor_onion(Req(beacon_req(myself, channels1))))
           adjacent(channelId1)._2 ! onion1
-          val (channelId2, onion2) = prepareSend(myself, origin, graph1, neighbor_onion(Next.Set(beacon_set(myself))))
+          val (channels2, _) = findRoute(graph1, myself, origin)
+          val (channelId2, onion2) = prepareSend(myself, origin, graph1, neighbor_onion(Next.Set(beacon_set(myself, channels2))))
           adjacent(channelId2)._2 ! onion2
-          beacons + Beacon(origin, distance(myself, origin))
+          beacons + Beacon(origin, distance(myself, origin), channels2.size)
         case Some(alternative) =>
           log.debug(s"sending alternative $alternative a beacon_req")
           val (channels1, _) = findRoute(graph1, myself, alternative)
@@ -135,23 +145,25 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           beacons
         case None if beacons.size < beaconCount =>
           log.info(s"adding $origin as a beacon")
-          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Next.Set(beacon_set(myself))))
+          val (channels1, _) = findRoute(graph1, myself, origin)
+          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Next.Set(beacon_set(myself, channels1))))
           adjacent(channelId)._2 ! onion
-          beacons + Beacon(origin, distance(myself, origin))
+          beacons + Beacon(origin, distance(myself, origin), channels1.size)
         case None if beacons.exists(b => b.distance.compareTo(distance(myself, origin)) > 0) =>
           val deprecatedBeacon = beacons.find(b => b.distance.compareTo(distance(myself, origin)) > 0).get
           log.info(s"replacing $deprecatedBeacon by $origin")
-          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Next.Set(beacon_set(myself))))
+          val (channels1, _) = findRoute(graph1, myself, origin)
+          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Next.Set(beacon_set(myself, channels1))))
           adjacent(channelId)._2 ! onion
-          beacons - deprecatedBeacon + Beacon(origin, distance(myself, origin))
+          beacons - deprecatedBeacon + Beacon(origin, distance(myself, origin), channels1.size)
         case None =>
           log.info(s"ignoring beacon candidate $origin")
           beacons
       }
       // this will cause old beacons to be removed from the graph
       val (graph2, _) = include(myself, graph1, Nil, radius, beacons1.map(_.id))
-      log.info(s"graph is now ${graph2string(graph2)}")
-      log.info(s"my beacons are now ${beacons1.map(b => pubkey2string(b.id)).mkString(",")}")
+      log.debug(s"graph is now ${graph2string(graph2)}")
+      log.info(s"my beacons are now ${beacons1.map(b => s"${pubkey2string(b.id)}(${b.hops})").mkString(",")}")
       context become main(graph2, adjacent, updatesBatch, beacons1)
     case msg@beacon_set(origin, channels) =>
       log.info(s"$origin chose me as a beacon")
@@ -174,7 +186,7 @@ object FlareRouter {
 
   case class NamedEdge(val id: BinaryData) extends DefaultEdge
 
-  case class Beacon(id: BinaryData, distance: BigInteger)
+  case class Beacon(id: BinaryData, distance: BigInteger, hops: Int)
 
   // @formatter:off
   case class RouteRequest(target: BinaryData, targetTable: routing_table)
