@@ -96,14 +96,13 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       // TODO : we should check that origin has not been pruned
       selected.headOption match {
         case Some(alternate) if alternate != myself =>
-
           // we reply with a better beacon and give them a route
-          // TODO : check that we are in this route ? (incentive)
-          val (channels, _) = findRoute(graph1, origin, alternate)
-          val hops = channels.size
+          // maybe not the shorted route but we want to be in it (incentive)
+          val (channels1, _) = findRoute(graph1, myself, alternate)
+          val hops = channels.size + channels1.size
           if (hops < 100) {
             log.debug(s"recommending alternate $alternate to $origin (hops=$hops)")
-            val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels))))
+            val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels ++ channels1))))
             adjacent(channelId)._2 ! onion
           } else {
             log.debug(s"alternate $alternate was better but it is too far from $origin (hops=$hops)")
