@@ -60,7 +60,7 @@ class FlareRouterSpec extends FunSuite {
 
     val g2 = g1.clone()
     assert(g1 == g2)
-
   }
+
 
 }

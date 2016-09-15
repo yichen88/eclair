@@ -265,11 +265,6 @@ message beacon_ack {
   repeated channel_desc channels = 3;
 }
 
-message beacon_set {
-  required bitcoin_pubkey origin = 1;
-  repeated channel_desc channels = 3;
-}
-
 message beacon_forward {
   required bitcoin_pubkey node = 1;
   required neighbor_onion onion = 2;
@@ -280,7 +275,6 @@ message neighbor_onion {
   oneof next {
     beacon_req req = 1;
     beacon_ack ack = 2;
-    beacon_set set = 3;
     beacon_forward forward = 4;
   }
 }
