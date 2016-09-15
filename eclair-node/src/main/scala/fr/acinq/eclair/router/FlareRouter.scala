@@ -28,7 +28,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  //context.system.scheduler.schedule(10 seconds, 1 minute, self, 'tick_beacons)
+  context.system.scheduler.schedule(10 seconds, 1 minute, self, 'tick_beacons)
 
   import FlareRouter._
 
@@ -45,8 +45,6 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       neighbor ! neighbor_hello(graph2table(graph1))
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
-      // TODO : we should normally regularly check for new beacons
-      context.system.scheduler.scheduleOnce(1 minute, self, 'tick_beacons)
       context become main(graph1, adjacent + (sha2562bin(channelDesc.channelId) -> (channelDesc, neighbor)), updatesBatch ++ updates1, beacons)
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
@@ -108,13 +106,13 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           } else {
             log.debug(s"alternate $alternate was better but it is too far from $origin (hops=$hops)")
             val (channels, _) = findRoute(graph1, myself, origin)
-            val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Ack(beacon_ack(myself, None, channels))))
+            val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, None, channels))))
             adjacent(channelId)._2 ! onion
           }
         case _ =>
           // we accept to be their beacon
           val (channels, _) = findRoute(graph1, myself, origin)
-          val (channelId, onion) = prepareSend(myself, origin, graph, neighbor_onion(Ack(beacon_ack(myself, None, channels))))
+          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, None, channels))))
           adjacent(channelId)._2 ! onion
       }
     case msg@beacon_ack(origin, alternative_opt, channels) =>
