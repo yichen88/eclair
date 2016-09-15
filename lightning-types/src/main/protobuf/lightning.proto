@@ -267,6 +267,7 @@ message beacon_ack {
 
 message beacon_set {
   required bitcoin_pubkey origin = 1;
+  repeated channel_desc channels = 3;
 }
 
 message beacon_forward {

@@ -22,7 +22,7 @@ class FlareRouterSpec extends FunSuite {
     val graph = new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge])
     val channel = channel_desc(sha256_hash(1, 1, 2, 2), myself, BinaryData("02"))
     val updates = routing_table_update(channel, OPEN) :: Nil
-    val (graph1, updates1) = include(myself, graph, updates, 3)
+    val (graph1, updates1) = include(myself, graph, updates, 3, Set())
     assert(graph1.containsVertex(channel.nodeA))
     assert(graph1.containsVertex(channel.nodeB))
     assert(graph1.containsEdge(NamedEdge(channel.channelId)))
@@ -36,7 +36,7 @@ class FlareRouterSpec extends FunSuite {
     val channel2 = channel_desc(sha256_hash(2, 2, 3, 3), BinaryData("02"), BinaryData("03"))
     val channel3 = channel_desc(sha256_hash(3, 3, 4, 4), BinaryData("03"), BinaryData("04"))
     val updates = routing_table_update(channel1, OPEN) :: routing_table_update(channel2, OPEN) :: routing_table_update(channel3, OPEN) :: Nil
-    val (graph1, updates1) = include(myself, graph, updates, 2)
+    val (graph1, updates1) = include(myself, graph, updates, 2, Set())
     assert(graph1.containsVertex(BinaryData("01")))
     assert(graph1.containsVertex(BinaryData("02")))
     assert(graph1.containsVertex(BinaryData("03")))
