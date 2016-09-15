@@ -1,20 +1,16 @@
 package fr.acinq.eclair.io
 
-import javax.crypto.Cipher
-
 import akka.actor._
 import akka.io.Tcp.{ErrorClosed, Received, Register, Write}
 import akka.util.ByteString
 import com.trueaccord.scalapb.GeneratedMessage
-import fr.acinq.bitcoin._
+import fr.acinq.bitcoin.{BinaryData, _}
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.crypto.{Decryptor, Encryptor}
 import fr.acinq.eclair.crypto.LightningCrypto._
+import fr.acinq.eclair.crypto.{Decryptor, Encryptor}
 import lightning._
 import lightning.pkt.Pkt._
-
-import scala.annotation.tailrec
 
 
 /**
@@ -49,6 +45,7 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
   them ! Write(ByteString.fromArray(firstMessage))
 
   def send(encryptor: Encryptor, message: BinaryData): Encryptor = {
+    log.debug(s"encrypting $message")
     val (encryptor1, ciphertext) = Encryptor.encrypt(encryptor, message)
     them ! Write(ByteString.fromArray(ciphertext))
     encryptor1
@@ -110,7 +107,7 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
 
   when(IO_WAITING_FOR_AUTH) {
     case Event(Received(chunk), s@SessionData(theirpub, decryptor, encryptor)) =>
-      log.debug(s"received chunk=${BinaryData(chunk)}")
+      log.debug(s"decrypting ${BinaryData(chunk)}")
       val decryptor1 = Decryptor.add(decryptor, chunk)
       decryptor1.bodies.headOption match {
         case None => stay using s.copy(decryptor = decryptor1)
@@ -130,7 +127,7 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
 
   when(IO_NORMAL) {
     case Event(Received(chunk), n@Normal(channel, s@SessionData(theirpub, decryptor, encryptor))) =>
-      log.debug(s"received chunk=${BinaryData(chunk)}")
+      log.debug(s"decrypting ${BinaryData(chunk)}")
       val decryptor1 = Decryptor.add(decryptor, chunk)
       decryptor1.bodies.map(plaintext => {
         val packet = pkt.parseFrom(plaintext)
