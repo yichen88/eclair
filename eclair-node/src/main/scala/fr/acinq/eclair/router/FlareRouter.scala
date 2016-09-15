@@ -44,7 +44,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val channelDesc = channel_desc(d.commitments.anchorId, Globals.Node.publicKey, theirNodeId)
       val updates = routing_table_update(channelDesc, OPEN) :: Nil
       val (graph1, updates1) = include(myself, graph, updates, radius)
-      log.info(s"graph is now $graph1")
+      log.info(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
       context become main(graph1, adjacent + (sha2562bin(channelDesc.channelId) -> (channelDesc, neighbor)), updatesBatch ++ updates1, beacons)
     case msg@neighbor_hello(table1) =>
@@ -53,7 +53,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
     case msg@neighbor_update(updates) =>
       log.debug(s"received $msg from $sender")
       val (graph1, updates1) = include(myself, graph, updates, radius)
-      log.info(s"graph is now $graph1")
+      log.info(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
       context become main(graph1, adjacent, updatesBatch ++ updates1, beacons)
     case msg@neighbor_reset() =>
@@ -83,7 +83,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
         case lightning.neighbor_onion.Next.Set(set) => self ! set
       }
     case msg@beacon_req(origin, channels) =>
-      log.debug(s"received $msg from $origin")
+      log.debug(s"received beacon_req msg from $origin with channels=${channels2string(channels)}")
       val nodes: Set[BinaryData] = graph.vertexSet().toSet - origin
       val distances = nodes.map(node => (node, distance(origin, node)))
       val selected = distances.toList.sortBy(_._2).map(_._1)
@@ -106,9 +106,10 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           adjacent(channelId)._2 ! onion
       }
       // TODO : we should not store the path to them here, but at beacon_set reception (no way to know if they will choose us)
+      log.info(s"graph is now ${graph2string(graph1)}")
       context become main(graph1, adjacent, updatesBatch, beacons)
     case msg@beacon_ack(origin, alternative_opt, channels) =>
-      log.debug(s"received $msg from $origin")
+      log.debug(s"received beacon_ack msg from $origin with alternative=$alternative_opt channels=${channels2string(channels)}")
       alternative_opt match {
         case None =>
           log.info(s"choosing $origin as my beacon")
@@ -129,6 +130,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           val (channels1, _) = findRoute(graph1, myself, beacon)
           val (channelId, onion) = prepareSend(myself, beacon, graph1, neighbor_onion(Req(beacon_req(myself, channels1))))
           adjacent(channelId)._2 ! onion
+          log.info(s"graph is now ${graph2string(graph1)}")
           context become main(graph1, adjacent, updatesBatch, beacons)
       }
     case msg@beacon_set(origin) =>
@@ -161,6 +163,15 @@ object FlareRouter {
     val channels = graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge)))
     routing_table(channels.toSeq)
   }
+
+  def graph2string(graph: SimpleGraph[BinaryData, NamedEdge]): String =
+    channels2string(graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge))).toSeq)
+
+  def pubkey2string(pubkey: BinaryData): String =
+    pubkey.toString().take(6)
+
+  def channels2string(channels: Seq[channel_desc]): String =
+    channels.map(c => s"${pubkey2string(c.nodeA)}->${pubkey2string(c.nodeB)}").mkString(" ")
 
   def merge(myself: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], table2: routing_table, radius: Int): SimpleGraph[BinaryData, NamedEdge] = {
     val updates = table2.channels.map(c => routing_table_update(c, OPEN))
