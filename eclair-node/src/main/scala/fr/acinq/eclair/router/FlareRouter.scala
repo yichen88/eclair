@@ -27,7 +27,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_refresh)
+  context.system.scheduler.schedule(10 seconds, 30 seconds, self, 'tick_refresh)
   context.system.scheduler.schedule(10 seconds, 10 seconds, self, 'tick_beacons)
 
   import FlareRouter._
@@ -68,7 +68,9 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       log.debug(s"received $msg from $sender")
       sender ! neighbor_hello(graph2table(graph))
     case 'tick_refresh =>
-      adjacent.map(_._2._2).foreach(_ ! neighbor_hello(graph2table(graph)))
+      // we send only an extract of the table 
+      val extract = Random.shuffle(graph2table(graph).channels).take(10)
+      adjacent.map(_._2._2).foreach(_ ! neighbor_hello(routing_table(extract)))
     case 'tick_updates if !updatesBatch.isEmpty =>
       adjacent.values.foreach(_._2 ! neighbor_update(updatesBatch))
       context become main(graph, adjacent, Nil, beacons)
