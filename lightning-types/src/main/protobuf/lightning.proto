@@ -249,6 +249,8 @@ message neighbor_update {
 }
 
 message neighbor_reset {
+  // here are my channel ids, please send me the diff
+  repeated sha256_hash channels_ids = 1;
 }
 
 message beacon_req {

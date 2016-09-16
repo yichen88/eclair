@@ -27,8 +27,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  context.system.scheduler.schedule(10 seconds, 30 seconds, self, 'tick_refresh)
-  context.system.scheduler.schedule(10 seconds, 10 seconds, self, 'tick_beacons)
+  context.system.scheduler.schedule(10 seconds, 30 seconds, self, 'tick_reset)
+  context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_beacons)
 
   import FlareRouter._
 
@@ -64,19 +64,22 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
       context become main(graph1, adjacent, updatesBatch ++ updates1, beacons)
-    case msg@neighbor_reset() =>
-      log.debug(s"received $msg from $sender")
-      sender ! neighbor_hello(graph2table(graph))
-    case 'tick_refresh =>
-      // we send only an extract of the table 
-      val extract = Random.shuffle(graph2table(graph).channels).take(10)
-      adjacent.map(_._2._2).foreach(_ ! neighbor_hello(routing_table(extract)))
+    case msg@neighbor_reset(channel_ids) =>
+      log.debug(s"received neighbor_reset from $sender with ${channel_ids.size} channels")
+      val diff = graph2table(graph).channels.filterNot(c => channel_ids.contains(c.channelId))
+      log.debug(s"sending back ${diff.size} channels to $sender")
+      sender ! neighbor_hello(routing_table(diff))
     case 'tick_updates if !updatesBatch.isEmpty =>
       adjacent.values.foreach(_._2 ! neighbor_update(updatesBatch))
       context become main(graph, adjacent, Nil, beacons)
     case 'tick_updates => // nothing to do
+    case 'tick_reset =>
+      for (node <- Random.shuffle(adjacent.values.map(_._2)).take(1)) {
+        log.debug(s"sending neighbor_reset message to random neighbor $node")
+        node ! neighbor_reset(graph2table(graph).channels.map(_.channelId))
+      }
     case 'tick_beacons =>
-      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(5)) {
+      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(1)) {
         log.debug(s"sending beacon_req message to random node $node")
         val (channels1, route) = findRoute(graph, myself, node)
         send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
