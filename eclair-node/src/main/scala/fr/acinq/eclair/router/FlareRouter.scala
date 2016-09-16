@@ -66,15 +66,15 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       context become main(graph1, adjacent, updatesBatch ++ updates1, beacons)
     case msg@neighbor_reset(channel_ids) =>
       log.debug(s"received neighbor_reset from $sender with ${channel_ids.size} channels")
-      val diff = graph2table(graph).channels.filterNot(c => channel_ids.contains(c.channelId))
+      val diff = graph2table(graph).channels.filterNot(c => channel_ids.contains(c.channelId)).map(c => routing_table_update(c, OPEN))
       log.debug(s"sending back ${diff.size} channels to $sender")
-      sender ! neighbor_hello(routing_table(diff))
+      sender ! neighbor_update(diff)
     case 'tick_updates if !updatesBatch.isEmpty =>
       adjacent.values.foreach(_._2 ! neighbor_update(updatesBatch))
       context become main(graph, adjacent, Nil, beacons)
     case 'tick_updates => // nothing to do
     case 'tick_reset =>
-      for (node <- Random.shuffle(adjacent.values.map(_._2)).take(1)) {
+      for (node <- adjacent.values.map(_._2)) {
         log.debug(s"sending neighbor_reset message to random neighbor $node")
         node ! neighbor_reset(graph2table(graph).channels.map(_.channelId))
       }
