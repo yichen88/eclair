@@ -57,9 +57,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val new_nodes = graph1.vertexSet().toSet -- graph.vertexSet().toSet
       for (node <- new_nodes) {
         log.debug(s"sending beacon_req message to new node $node")
-        val (channels1, _) = findRoute(graph1, myself, node)
-        val (channelId, onion) = prepareSend(myself, node, graph1, neighbor_onion(Req(beacon_req(myself, channels1))))
-        adjacent(channelId)._2 ! onion
+        val (channels1, route) = findRoute(graph1, myself, node)
+        send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
@@ -74,16 +73,18 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
     case 'tick_beacons =>
       for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(1)) {
         log.debug(s"sending beacon_req message to random node $node")
-        val (channels1, _) = findRoute(graph, myself, node)
-        val (channelId, onion) = prepareSend(myself, node, graph, neighbor_onion(Req(beacon_req(myself, channels1))))
-        adjacent(channelId)._2 ! onion
+        val (channels1, route) = findRoute(graph, myself, node)
+        send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
     case msg@neighbor_onion(onion) =>
       (onion: @unchecked) match {
         case lightning.neighbor_onion.Next.Forward(next) =>
           //log.debug(s"forwarding $msg to ${next.node}")
-          val channel = adjacent.find(c => c._2._1.nodeA == next.node || c._2._1.nodeB == next.node).map(_._2._2).getOrElse(throw new RuntimeException(s"could not find neighbor ${next.node}"))
-          channel ! next.onion
+          val neighbor = next.node
+          neighbor2channel(neighbor, adjacent) match {
+            case Some(channel) => channel ! next.onion
+            case None => log.error(s"could not find channel for neighbor $neighbor, cannot forward $msg")
+          }
         case lightning.neighbor_onion.Next.Req(req) => self ! req
         case lightning.neighbor_onion.Next.Ack(ack) => self ! ack
       }
@@ -105,19 +106,17 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           val hops = channels.size + channels1.size
           if (hops < 100) {
             log.debug(s"recommending alternate $alternate to $origin (hops=$hops)")
-            val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels ++ channels1))))
-            adjacent(channelId)._2 ! onion
+            val (_, route) = findRoute(graph1, myself, origin)
+            send(route, adjacent, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels ++ channels1))))
           } else {
             log.debug(s"alternate $alternate was better but it is too far from $origin (hops=$hops)")
-            val (channels, _) = findRoute(graph1, myself, origin)
-            val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, None, channels))))
-            adjacent(channelId)._2 ! onion
+            val (channels2, route) = findRoute(graph1, myself, origin)
+            send(route, adjacent, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
           }
         case _ =>
           // we accept to be their beacon
-          val (channels, _) = findRoute(graph1, myself, origin)
-          val (channelId, onion) = prepareSend(myself, origin, graph1, neighbor_onion(Ack(beacon_ack(myself, None, channels))))
-          adjacent(channelId)._2 ! onion
+          val (channels2, route) = findRoute(graph1, myself, origin)
+          send(route, adjacent, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
       }
     case msg@beacon_ack(origin, alternative_opt, channels) =>
       log.debug(s"received beacon_ack msg from $origin with alternative=$alternative_opt channels=${channels2string(channels)}")
@@ -132,16 +131,14 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           beacons
         case Some(alternative) if beacons.size < beaconCount =>
           log.debug(s"sending alternative $alternative a beacon_req and adding origin $origin as beacon in the meantime")
-          val (channels1, _) = findRoute(graph1, myself, alternative)
-          val (channelId1, onion1) = prepareSend(myself, alternative, graph1, neighbor_onion(Req(beacon_req(myself, channels1))))
-          adjacent(channelId1)._2 ! onion1
+          val (channels1, route) = findRoute(graph1, myself, alternative)
+          send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
           val (channels2, _) = findRoute(graph1, myself, origin)
           beacons + Beacon(origin, distance(myself, origin), channels2.size)
         case Some(alternative) =>
           log.debug(s"sending alternative $alternative a beacon_req")
-          val (channels1, _) = findRoute(graph1, myself, alternative)
-          val (channelId, onion) = prepareSend(myself, alternative, graph1, neighbor_onion(Req(beacon_req(myself, channels1))))
-          adjacent(channelId)._2 ! onion
+          val (channels1, route) = findRoute(graph1, myself, alternative)
+          send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
           beacons
         case None if beacons.map(_.id).contains(origin) =>
           log.debug(s"we already have beacon $origin")
@@ -172,6 +169,15 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       sender ! graph2table(graph).channels
     case 'beacons =>
       sender ! beacons
+  }
+
+  def send(route: Seq[BinaryData], adjacent: Map[BinaryData, (channel_desc, ActorSelection)], msg: neighbor_onion): Unit = {
+    val onion = buildOnion(route.drop(2), msg)
+    val neighbor = route(1)
+    neighbor2channel(neighbor, adjacent) match {
+      case Some(actorSelection) => actorSelection ! onion
+      case None => log.error(s"could not find channel for neighbor $neighbor")
+    }
   }
 
 }
@@ -260,12 +266,8 @@ object FlareRouter {
     }
   }
 
-  def prepareSend(myself: BinaryData, target: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], msg: neighbor_onion): (BinaryData, neighbor_onion) = {
-    val (channels, nodes) = findRoute(graph, myself, target)
-    val channelId = channels.head.channelId
-    val onion = buildOnion(nodes.drop(2), msg)
-    (channelId, onion)
-  }
+  def neighbor2channel(neighbor: BinaryData, adjacent: Map[BinaryData, (channel_desc, ActorSelection)]): Option[ActorSelection] =
+    adjacent.values.find(v => pubkey2bin(v._1.nodeA) == neighbor || pubkey2bin(v._1.nodeB) == neighbor).map(_._2)
 
   def distance(a: BinaryData, b: BinaryData): BigInteger = {
     require(a.length == b.length)
