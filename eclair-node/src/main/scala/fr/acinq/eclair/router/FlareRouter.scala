@@ -8,7 +8,6 @@ import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel.{ChannelChangedState, DATA_NORMAL, NORMAL}
 import lightning._
-import lightning.neighbor_onion.Next
 import lightning.neighbor_onion.Next.{Ack, Forward, Req}
 import lightning.routing_table_update.update_type._
 import org.jgrapht.alg.DijkstraShortestPath
@@ -17,7 +16,7 @@ import org.jgrapht.graph.{DefaultEdge, SimpleGraph}
 import scala.collection.JavaConversions._
 import scala.concurrent.Future
 import scala.concurrent.duration._
-import scala.util.{Failure, Success, Try}
+import scala.util.{Failure, Random, Success, Try}
 
 /**
   * Created by PM on 08/09/2016.
@@ -28,7 +27,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  context.system.scheduler.schedule(10 seconds, 1 minute, self, 'tick_beacons)
+  context.system.scheduler.schedule(10 seconds, 10 seconds, self, 'tick_beacons)
 
   import FlareRouter._
 
@@ -54,6 +53,14 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
     case msg@neighbor_update(updates) =>
       log.debug(s"received $msg from $sender")
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
+      // we send beacon req to every discovered node
+      val new_nodes = graph.vertexSet().toSet -- graph1.vertexSet().toSet
+      for (node <- new_nodes) {
+        log.debug(s"sending beacon_req message to new node $node")
+        val (channels1, _) = findRoute(graph1, myself, node)
+        val (channelId, onion) = prepareSend(myself, node, graph1, neighbor_onion(Req(beacon_req(myself, channels1))))
+        adjacent(channelId)._2 ! onion
+      }
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
       context become main(graph1, adjacent, updatesBatch ++ updates1, beacons)
@@ -65,19 +72,16 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       context become main(graph, adjacent, Nil, beacons)
     case 'tick_updates => // nothing to do
     case 'tick_beacons =>
-      val nodes: Set[BinaryData] = graph.vertexSet().toSet - myself
-      val distances = nodes.map(node => (node, distance(myself, node)))
-      val selected = distances.toList.sortBy(_._2).map(_._1).take(beaconCount)
-      selected.foreach(node => {
-        log.debug(s"sending BeaconReq message to $node")
+      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(1)) {
+        log.debug(s"sending beacon_req message to random node $node")
         val (channels1, _) = findRoute(graph, myself, node)
         val (channelId, onion) = prepareSend(myself, node, graph, neighbor_onion(Req(beacon_req(myself, channels1))))
         adjacent(channelId)._2 ! onion
-      })
+      }
     case msg@neighbor_onion(onion) =>
       (onion: @unchecked) match {
         case lightning.neighbor_onion.Next.Forward(next) =>
-          log.debug(s"forwarding $msg to ${next.node}")
+          //log.debug(s"forwarding $msg to ${next.node}")
           val channel = adjacent.find(c => c._2._1.nodeA == next.node || c._2._1.nodeB == next.node).map(_._2._2).getOrElse(throw new RuntimeException(s"could not find neighbor ${next.node}"))
           channel ! next.onion
         case lightning.neighbor_onion.Next.Req(req) => self ! req
@@ -140,7 +144,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           adjacent(channelId)._2 ! onion
           beacons
         case None if beacons.map(_.id).contains(origin) =>
-          log.info(s"we already have beacon $origin")
+          log.debug(s"we already have beacon $origin")
           beacons
         case None if beacons.size < beaconCount =>
           log.info(s"adding $origin as a beacon")
@@ -152,13 +156,13 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           val (channels1, _) = findRoute(graph1, myself, origin)
           beacons - deprecatedBeacon + Beacon(origin, distance(myself, origin), channels1.size)
         case None =>
-          log.info(s"ignoring beacon candidate $origin")
+          log.debug(s"ignoring beacon candidate $origin")
           beacons
       }
       // this will cause old beacons to be removed from the graph
       val (graph2, _) = include(myself, graph1, Nil, radius, beacons1.map(_.id))
       log.debug(s"graph is now ${graph2string(graph2)}")
-      log.info(s"my beacons are now ${beacons1.map(b => s"${pubkey2string(b.id)}(${b.hops})").mkString(",")}")
+      log.debug(s"my beacons are now ${beacons1.map(b => s"${pubkey2string(b.id)}(${b.hops})").mkString(",")}")
       context become main(graph2, adjacent, updatesBatch, beacons1)
     case RouteRequest(target, targetTable) =>
       val g1 = graph.clone().asInstanceOf[SimpleGraph[BinaryData, NamedEdge]]
