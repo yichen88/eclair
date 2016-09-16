@@ -74,7 +74,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       context become main(graph, adjacent, Nil, beacons)
     case 'tick_updates => // nothing to do
     case 'tick_reset =>
-      for (node <- adjacent.values.map(_._2)) {
+      for (node <- Random.shuffle(adjacent.values.map(_._2)).take(3)) {
         log.debug(s"sending neighbor_reset message to random neighbor $node")
         node ! neighbor_reset(graph2table(graph).channels.map(_.channelId))
       }
