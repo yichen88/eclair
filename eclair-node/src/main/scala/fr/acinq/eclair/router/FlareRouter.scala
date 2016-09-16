@@ -26,8 +26,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
   context.system.eventStream.subscribe(self, classOf[ChannelChangedState])
 
   import scala.concurrent.ExecutionContext.Implicits.global
-  
-  context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_beacons)
+
+  //context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_beacons)
 
   import FlareRouter._
 
