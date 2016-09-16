@@ -38,7 +38,7 @@
                         </goals>
                         <configuration>
                             <appClass>fr.acinq.eclair.Boot</appClass>
-                            <type>fat</type>
+                            <type>thin</type>
                             <customDescriptor>-${git.commit.id.abbrev}-capsule-fat</customDescriptor>
                         </configuration>
                     </execution>
@@ -127,6 +127,11 @@
             <version>2.5.10</version>
         </dependency>
         <dependency>
+            <groupId>com.papertrailapp</groupId>
+            <artifactId>logback-syslog4j</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+        <dependency>
             <groupId>com.typesafe.akka</groupId>
             <artifactId>akka-testkit_${scala.version.short}</artifactId>
             <version>${akka.version}</version>
@@ -136,6 +141,16 @@
             <artifactId>guava</artifactId>
             <version>18.0</version>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-ec2</artifactId>
+            <version>1.11.34</version>
+        </dependency>
+        <dependency>
+            <groupId>org.json4s</groupId>
+            <artifactId>json4s-jackson_2.11</artifactId>
+            <version>3.4.0</version>
         </dependency>
     </dependencies>
 </project>

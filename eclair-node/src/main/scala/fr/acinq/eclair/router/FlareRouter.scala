@@ -54,7 +54,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       log.debug(s"received $msg from $sender")
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
       // we send beacon req to every discovered node
-      val new_nodes = graph.vertexSet().toSet -- graph1.vertexSet().toSet
+      val new_nodes = graph1.vertexSet().toSet -- graph.vertexSet().toSet
       for (node <- new_nodes) {
         log.debug(s"sending beacon_req message to new node $node")
         val (channels1, _) = findRoute(graph1, myself, node)
