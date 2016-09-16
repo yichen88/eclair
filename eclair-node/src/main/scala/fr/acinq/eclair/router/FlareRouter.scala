@@ -27,6 +27,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
+  context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_refresh)
   context.system.scheduler.schedule(10 seconds, 10 seconds, self, 'tick_beacons)
 
   import FlareRouter._
@@ -66,12 +67,14 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
     case msg@neighbor_reset() =>
       log.debug(s"received $msg from $sender")
       sender ! neighbor_hello(graph2table(graph))
+    case 'tick_refresh =>
+      adjacent.map(_._2._2).foreach(_ ! neighbor_hello(graph2table(graph)))
     case 'tick_updates if !updatesBatch.isEmpty =>
       adjacent.values.foreach(_._2 ! neighbor_update(updatesBatch))
       context become main(graph, adjacent, Nil, beacons)
     case 'tick_updates => // nothing to do
     case 'tick_beacons =>
-      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(1)) {
+      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(5)) {
         log.debug(s"sending beacon_req message to random node $node")
         val (channels1, route) = findRoute(graph, myself, node)
         send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
@@ -204,7 +207,7 @@ object FlareRouter {
   }
 
   def graph2string(graph: SimpleGraph[BinaryData, NamedEdge]): String =
-    channels2string(graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge))).toSeq)
+    s"node_count=${graph.vertexSet.size} edges: " + channels2string(graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge))).toSeq)
 
   def pubkey2string(pubkey: BinaryData): String =
     pubkey.toString().take(6)
