@@ -133,7 +133,7 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
         val packet = pkt.parseFrom(plaintext)
         self ! packet
       })
-      stay using Normal(channel, s.copy(decryptor = decryptor1.copy(header = None, bodies = Vector.empty[BinaryData])))
+      stay using Normal(channel, s.copy(decryptor = decryptor1.copy(bodies = Vector.empty[BinaryData])))
 
     case Event(packet: pkt, n@Normal(channel, s@SessionData(theirpub, decryptor, encryptor))) =>
       log.debug(s"receiving $packet")
