@@ -88,7 +88,7 @@ class Setup extends Logging {
     case "local" => system.actorOf(Props[LocalPaymentHandler], name = "payment-handler")
     case "noop" => system.actorOf(Props[NoopPaymentHandler], name = "payment-handler")
   }
-  val radius = 3// TODO : hardcoded! config.getInt("eclair.flare.radius")
+  val radius = config.getInt("eclair.flare.radius")
   val beaconCount = config.getInt("eclair.flare.beacon-count")
   logger.info(s"flare params radius=$radius beaconCount=$beaconCount")
   val router = system.actorOf(FlareRouter.props(radius, beaconCount), name = "neighbor-handler")
