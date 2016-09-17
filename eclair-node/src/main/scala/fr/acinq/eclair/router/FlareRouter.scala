@@ -43,7 +43,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
       neighbor.actorSelection ! neighbor_hello(graph2table(graph1))
       log.debug(s"graph is now ${graph2string(graph1)}")
-      context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
+      context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
       context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
@@ -61,7 +61,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
       log.debug(s"graph is now ${graph2string(graph1)}")
-      context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
+      context.system.scheduler.scheduleOnce(3 second, self, 'tick_updates)
       context become main(graph1, neighbors, updatesBatch ++ updates1, beacons)
     case msg@neighbor_reset(channel_ids) =>
       log.debug(s"received neighbor_reset from $sender with ${channel_ids.size} channels")
