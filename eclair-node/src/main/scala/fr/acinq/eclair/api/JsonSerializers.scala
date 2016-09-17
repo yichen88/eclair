@@ -46,8 +46,8 @@ class ShaChainSerializer extends CustomSerializer[ShaChain](format => ( {
   ))
 
 class BigIntegerSerializer extends CustomSerializer[BigInteger](format => ( {
-  case JString(x) if (false) => // NOT IMPLEMENTED
-    ???
+  case JString(x) => // NOT IMPLEMENTED
+    new BigInteger("00")
 }, {
   case x: BigInteger => JString(BinaryData(x.toByteArray).toString())
 }
