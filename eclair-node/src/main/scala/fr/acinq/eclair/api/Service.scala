@@ -13,7 +13,7 @@ import fr.acinq.eclair._
 import fr.acinq.eclair.channel.Register.{ListChannels, SendCommand}
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.CreatePayment
-import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
+import fr.acinq.eclair.router.FlareRouter.{Beacon, FlareInfo, RouteRequest, RouteResponse}
 import grizzled.slf4j.Logging
 import lightning.channel_desc
 import org.json4s.JsonAST.JString
@@ -42,7 +42,7 @@ trait Service extends Logging {
 
   implicit def ec: ExecutionContext = ExecutionContext.Implicits.global
 
-  implicit val formats = org.json4s.DefaultFormats + new BinaryDataSerializer + new StateSerializer + new Sha256Serializer + new ShaChainSerializer
+  implicit val formats = org.json4s.DefaultFormats + new BinaryDataSerializer + new StateSerializer + new Sha256Serializer + new ShaChainSerializer + new BigIntegerSerializer
   implicit val timeout = Timeout(30 seconds)
 
   def connect(host: String, port: Int, amount: Satoshi): Unit
@@ -116,6 +116,12 @@ trait Service extends Logging {
                   "fulfillhtlc (channel_id, htlc_id, r): fulfill an htlc",
                   "close (channel_id): close a channel",
                   "help: display this message"))
+              case JsonRPCBody(_, _, "suicide", _) =>
+                logger.warn("commiting suicide")
+                System.exit(0)
+                Future.successful("")
+              case JsonRPCBody(_, _, "flare_info", _) =>
+                (router ? 'info).mapTo[FlareInfo]
               case _ => Future.failed(new RuntimeException("method not found"))
             }
 

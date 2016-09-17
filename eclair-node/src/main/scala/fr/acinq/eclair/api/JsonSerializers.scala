@@ -1,5 +1,7 @@
 package fr.acinq.eclair.api
 
+import java.math.BigInteger
+
 import fr.acinq.eclair._
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair.channel.State
@@ -40,5 +42,13 @@ class ShaChainSerializer extends CustomSerializer[ShaChain](format => ( {
     ???
 }, {
   case x: ShaChain => JNull
+}
+  ))
+
+class BigIntegerSerializer extends CustomSerializer[BigInteger](format => ( {
+  case JString(x) if (false) => // NOT IMPLEMENTED
+    ???
+}, {
+  case x: BigInteger => JString(BinaryData(x.toByteArray).toString())
 }
   ))

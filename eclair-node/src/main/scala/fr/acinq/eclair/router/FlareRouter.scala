@@ -48,12 +48,19 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
       val graph1 = merge(myself, graph, table1, radius, beacons.map(_.id))
+      // we send beacon req to every newly discovered node
+      val new_nodes = graph1.vertexSet().toSet -- graph.vertexSet().toSet
+      for (node <- new_nodes) {
+        log.debug(s"sending beacon_req message to new node $node")
+        val (channels1, route) = findRoute(graph1, myself, node)
+        send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
+      }
       log.debug(s"graph is now ${graph2string(graph1)}")
       context become main(graph1, neighbors, updatesBatch, beacons)
     case msg@neighbor_update(updates) =>
       log.debug(s"received $msg from $sender")
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
-      // we send beacon req to every discovered node
+      // we send beacon req to every newly discovered node
       val new_nodes = graph1.vertexSet().toSet -- graph.vertexSet().toSet
       for (node <- new_nodes) {
         log.debug(s"sending beacon_req message to new node $node")
@@ -178,6 +185,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       sender ! graph2table(graph).channels
     case 'beacons =>
       sender ! beacons
+    case 'info =>
+      sender ! FlareInfo(neighbors.map(_.node_id).size, graph.vertexSet().size(), beacons)
   }
 
   def send(route: Seq[BinaryData], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
@@ -199,6 +208,8 @@ object FlareRouter {
   case class NamedEdge(val id: BinaryData) extends DefaultEdge {
     override def toString: String = id.toString()
   }
+
+  case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
 
   case class Neighbor(node_id: BinaryData, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
 
