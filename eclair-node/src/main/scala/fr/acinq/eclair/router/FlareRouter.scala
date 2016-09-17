@@ -7,7 +7,7 @@ import akka.pattern._
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel.{ChannelChangedState, DATA_NORMAL, NORMAL}
-import lightning._
+import lightning.{channel_desc, _}
 import lightning.neighbor_onion.Next.{Ack, Forward, Req}
 import lightning.routing_table_update.update_type._
 import org.jgrapht.alg.DijkstraShortestPath
@@ -33,23 +33,23 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   val myself = Globals.Node.publicKey
 
-  override def receive: Receive = main(new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge]), Map(), Nil, Set())
+  override def receive: Receive = main(new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge]), Nil, Nil, Set())
 
-  def main(graph: SimpleGraph[BinaryData, NamedEdge], adjacent: Map[BinaryData, (channel_desc, ActorSelection)], updatesBatch: List[routing_table_update], beacons: Set[Beacon]): Receive = {
+  def main(graph: SimpleGraph[BinaryData, NamedEdge], neighbors: List[Neighbor], updatesBatch: List[routing_table_update], beacons: Set[Beacon]): Receive = {
     case ChannelChangedState(channel, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
-      val neighbor = context.actorSelection(channel.path.parent)
-      val channelDesc = channel_desc(d.commitments.anchorId, Globals.Node.publicKey, theirNodeId)
+      val neighbor = Neighbor(theirNodeId, d.commitments.anchorId, context.actorSelection(channel.path.parent), Nil)
+      val channelDesc = channel_desc(neighbor.channel_id, myself, neighbor.node_id)
       val updates = routing_table_update(channelDesc, OPEN) :: Nil
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
-      neighbor ! neighbor_hello(graph2table(graph1))
+      neighbor.actorSelection ! neighbor_hello(graph2table(graph1))
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
-      context become main(graph1, adjacent + (sha2562bin(channelDesc.channelId) -> (channelDesc, neighbor)), updatesBatch ++ updates1, beacons)
+      context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
       val graph1 = merge(myself, graph, table1, radius, beacons.map(_.id))
       log.debug(s"graph is now ${graph2string(graph1)}")
-      context become main(graph1, adjacent, updatesBatch, beacons)
+      context become main(graph1, neighbors, updatesBatch, beacons)
     case msg@neighbor_update(updates) =>
       log.debug(s"received $msg from $sender")
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
@@ -58,32 +58,39 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       for (node <- new_nodes) {
         log.debug(s"sending beacon_req message to new node $node")
         val (channels1, route) = findRoute(graph1, myself, node)
-        send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
+        send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(200 millis, self, 'tick_updates)
-      context become main(graph1, adjacent, updatesBatch ++ updates1, beacons)
+      context become main(graph1, neighbors, updatesBatch ++ updates1, beacons)
     case msg@neighbor_reset(channel_ids) =>
       log.debug(s"received neighbor_reset from $sender with ${channel_ids.size} channels")
       val diff = graph2table(graph).channels.filterNot(c => channel_ids.contains(c.channelId)).map(c => routing_table_update(c, OPEN))
       log.debug(s"sending back ${diff.size} channels to $sender")
       sender ! neighbor_update(diff)
     case 'tick_updates if !updatesBatch.isEmpty =>
-      adjacent.values.foreach(_._2 ! neighbor_update(updatesBatch))
-      context become main(graph, adjacent, Nil, beacons)
+      val neighbors1 = neighbors.map(neighbor => {
+        val diff = updatesBatch.filterNot(neighbor.sent.contains(_))
+        if (diff.size > 0) {
+          log.debug(s"sending $diff to ${neighbor.node_id}")
+          neighbor.actorSelection ! neighbor_update(diff)
+        }
+        neighbor.copy(sent = neighbor.sent ::: diff)
+      })
+      context become main(graph, neighbors1, Nil, beacons)
     case 'tick_updates => // nothing to do
     case 'tick_beacons =>
       for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(1)) {
         log.debug(s"sending beacon_req message to random node $node")
         val (channels1, route) = findRoute(graph, myself, node)
-        send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
+        send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
     case msg@neighbor_onion(onion) =>
       (onion: @unchecked) match {
         case lightning.neighbor_onion.Next.Forward(next) =>
           //log.debug(s"forwarding $msg to ${next.node}")
           val neighbor = next.node
-          neighbor2channel(neighbor, adjacent) match {
+          neighbor2channel(neighbor, neighbors) match {
             case Some(channel) => channel ! next.onion
             case None => log.error(s"could not find channel for neighbor $neighbor, cannot forward $msg")
           }
@@ -109,16 +116,16 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
           if (hops < 100) {
             log.debug(s"recommending alternate $alternate to $origin (hops=$hops)")
             val (_, route) = findRoute(graph1, myself, origin)
-            send(route, adjacent, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels ++ channels1))))
+            send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels ++ channels1))))
           } else {
             log.debug(s"alternate $alternate was better but it is too far from $origin (hops=$hops)")
             val (channels2, route) = findRoute(graph1, myself, origin)
-            send(route, adjacent, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
+            send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
           }
         case _ =>
           // we accept to be their beacon
           val (channels2, route) = findRoute(graph1, myself, origin)
-          send(route, adjacent, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
+          send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
       }
     case msg@beacon_ack(origin, alternative_opt, channels) =>
       log.debug(s"received beacon_ack msg from $origin with alternative=$alternative_opt channels=${channels2string(channels)}")
@@ -134,13 +141,13 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
         case Some(alternative) if beacons.size < beaconCount =>
           log.debug(s"sending alternative $alternative a beacon_req and adding origin $origin as beacon in the meantime")
           val (channels1, route) = findRoute(graph1, myself, alternative)
-          send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
+          send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
           val (channels2, _) = findRoute(graph1, myself, origin)
           beacons + Beacon(origin, distance(myself, origin), channels2.size)
         case Some(alternative) =>
           log.debug(s"sending alternative $alternative a beacon_req")
           val (channels1, route) = findRoute(graph1, myself, alternative)
-          send(route, adjacent, neighbor_onion(Req(beacon_req(myself, channels1))))
+          send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
           beacons
         case None if beacons.map(_.id).contains(origin) =>
           log.debug(s"we already have beacon $origin")
@@ -162,7 +169,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val (graph2, _) = include(myself, graph1, Nil, radius, beacons1.map(_.id))
       log.debug(s"graph is now ${graph2string(graph2)}")
       log.debug(s"my beacons are now ${beacons1.map(b => s"${pubkey2string(b.id)}(${b.hops})").mkString(",")}")
-      context become main(graph2, adjacent, updatesBatch, beacons1)
+      context become main(graph2, neighbors, updatesBatch, beacons1)
     case RouteRequest(target, targetTable) =>
       val g1 = graph.clone().asInstanceOf[SimpleGraph[BinaryData, NamedEdge]]
       val g2 = merge(myself, g1, targetTable, 100, Set())
@@ -173,10 +180,10 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       sender ! beacons
   }
 
-  def send(route: Seq[BinaryData], adjacent: Map[BinaryData, (channel_desc, ActorSelection)], msg: neighbor_onion): Unit = {
+  def send(route: Seq[BinaryData], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
     val onion = buildOnion(route.drop(2), msg)
     val neighbor = route(1)
-    neighbor2channel(neighbor, adjacent) match {
+    neighbor2channel(neighbor, neighbors) match {
       case Some(actorSelection) => actorSelection ! onion
       case None => log.error(s"could not find channel for neighbor $neighbor")
     }
@@ -192,6 +199,8 @@ object FlareRouter {
   case class NamedEdge(val id: BinaryData) extends DefaultEdge {
     override def toString: String = id.toString()
   }
+
+  case class Neighbor(node_id: BinaryData, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
 
   case class Beacon(id: BinaryData, distance: BigInteger, hops: Int)
 
@@ -268,8 +277,8 @@ object FlareRouter {
     }
   }
 
-  def neighbor2channel(neighbor: BinaryData, adjacent: Map[BinaryData, (channel_desc, ActorSelection)]): Option[ActorSelection] =
-    adjacent.values.find(v => pubkey2bin(v._1.nodeA) == neighbor || pubkey2bin(v._1.nodeB) == neighbor).map(_._2)
+  def neighbor2channel(node_id: BinaryData, neighbors: List[Neighbor]): Option[ActorSelection] =
+    neighbors.find(_.node_id == node_id).map(_.actorSelection)
 
   def distance(a: BinaryData, b: BinaryData): BigInteger = {
     require(a.length == b.length)
