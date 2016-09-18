@@ -117,7 +117,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       selected.headOption match {
         case Some(alternate) if alternate != myself =>
           // we reply with a better beacon and give them a route
-          // maybe not the shorted route but we want to be in it (incentive)
+          // maybe not the shortest route but we want to be on the path (that's in our interest)
           val (channels1, _) = findRoute(graph1, myself, alternate)
           val hops = channels.size + channels1.size
           if (hops < 100) {
