@@ -7,9 +7,9 @@ import akka.pattern._
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel.{ChannelChangedState, DATA_NORMAL, NORMAL}
-import lightning.{channel_desc, _}
 import lightning.neighbor_onion.Next.{Ack, Forward, Req}
 import lightning.routing_table_update.update_type._
+import lightning.{channel_desc, _}
 import org.jgrapht.alg.DijkstraShortestPath
 import org.jgrapht.graph.{DefaultEdge, SimpleGraph}
 
@@ -205,17 +205,11 @@ object FlareRouter {
 
   def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], radius, beaconCount)
 
-  case class NamedEdge(val id: BinaryData) extends DefaultEdge {
-    override def toString: String = id.toString()
-  }
-
-  case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
-
-  case class Neighbor(node_id: BinaryData, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
-
-  case class Beacon(id: BinaryData, distance: BigInteger, hops: Int)
-
   // @formatter:off
+  case class NamedEdge(val id: BinaryData) extends DefaultEdge { override def toString: String = id.toString() }
+  case class Neighbor(node_id: BinaryData, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
+  case class Beacon(id: BinaryData, distance: BigInteger, hops: Int)
+  case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
   case class RouteRequest(target: BinaryData, targetTable: routing_table)
   case class RouteResponse(route: Seq[BinaryData])
   // @formatter:on
