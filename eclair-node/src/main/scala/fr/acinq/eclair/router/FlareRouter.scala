@@ -190,6 +190,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
   }
 
   def send(route: Seq[BinaryData], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
+    require(route.size >= 2, s"$route should be of size >=2 (neighbors=$neighbors msg=$msg)")
     val onion = buildOnion(route.drop(2), msg)
     val neighbor = route(1)
     neighbor2channel(neighbor, neighbors) match {
