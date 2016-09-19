@@ -1,5 +1,6 @@
 package fr.acinq.eclair.gui
 
+import java.io.File
 import javafx.application.{Application, Platform}
 import javafx.beans.value.{ChangeListener, ObservableValue}
 import javafx.embed.swing.SwingNode
@@ -9,16 +10,14 @@ import javafx.scene.Scene
 import javafx.scene.control.TabPane.TabClosingPolicy
 import javafx.scene.control._
 import javafx.scene.layout.{BorderPane, HBox, VBox}
-import javafx.stage.{Stage, WindowEvent}
+import javafx.stage.FileChooser.ExtensionFilter
+import javafx.stage.{FileChooser, Stage, WindowEvent}
 
 import akka.actor.Props
 import com.mxgraph.swing.mxGraphComponent
-import fr.acinq.eclair.{Globals, Setup}
 import fr.acinq.eclair.channel.ChannelEvent
 import fr.acinq.eclair.router.NetworkEvent
-
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
+import fr.acinq.eclair.{Globals, Setup}
 
 
 /**
@@ -33,9 +32,12 @@ class MainWindow extends Application {
   val itemConnect = new MenuItem("Open channel")
   val itemSend = new MenuItem("Pay")
   val itemReceive = new MenuItem("Receive payment")
-
   menuChannels.getItems.addAll(itemConnect, new SeparatorMenuItem(), itemSend, itemReceive)
-  menuBar.getMenus().addAll(menuChannels)
+  val menuTools = new Menu("Tools")
+  val itemDotExport = new MenuItem("Export to dot file")
+  menuTools.getItems.addAll(itemDotExport)
+
+  menuBar.getMenus().addAll(menuChannels, menuTools)
   root.setTop(menuBar)
 
   val tabChannels = new Tab("Channels")
@@ -92,6 +94,15 @@ class MainWindow extends Application {
             })
             itemReceive.setOnAction(new EventHandler[ActionEvent] {
               override def handle(event: ActionEvent): Unit = new DialogReceive(primaryStage, handlers).show()
+            })
+            itemDotExport.setOnAction(new EventHandler[ActionEvent] {
+              override def handle(event: ActionEvent): Unit = {
+                val fileChooser = new FileChooser()
+                fileChooser.setTitle("Save as")
+                fileChooser.getExtensionFilters.addAll(new ExtensionFilter("DOT File (*.dot)", "*.dot"))
+                val file = fileChooser.showSaveDialog(primaryStage)
+                if (file != null) handlers.exportToDot(file)
+              }
             })
 
             def refreshGraph: Unit = {

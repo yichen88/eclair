@@ -1,14 +1,15 @@
 package fr.acinq.eclair.gui
 
 
+import java.io.{BufferedOutputStream, File, FileOutputStream}
 import java.util.Base64
 import javafx.application.Platform
 import javafx.scene.control.{TextArea, TextField}
 
 import fr.acinq.bitcoin.{BinaryData, Satoshi}
+import fr.acinq.eclair._
 import fr.acinq.eclair.io.Client
 import fr.acinq.eclair.router.CreatePayment
-import fr.acinq.eclair._
 import grizzled.slf4j.Logging
 import lightning.channel_desc
 
@@ -60,5 +61,15 @@ class Handlers(setup: Setup) extends Logging {
         }
       })
     }
+  }
+
+  def exportToDot(file: File): Unit = {
+    import akka.pattern.ask
+    (router ? 'dot).mapTo[BinaryData].map(data => printToFile(file)(writer => writer.write(data.data.toArray)))
+  }
+
+  def printToFile(f: java.io.File)(op: java.io.OutputStream => Unit) {
+    val p = new BufferedOutputStream(new FileOutputStream(f))
+    try { op(p) } finally { p.close() }
   }
 }

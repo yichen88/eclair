@@ -1,6 +1,8 @@
 package fr.acinq.eclair.router
 
+import java.io.{ByteArrayOutputStream, OutputStreamWriter}
 import java.math.BigInteger
+import java.util
 
 import akka.actor.{Actor, ActorLogging, ActorSelection, Props}
 import akka.pattern._
@@ -11,6 +13,7 @@ import lightning.neighbor_onion.Next.{Ack, Forward, Req}
 import lightning.routing_table_update.update_type._
 import lightning.{channel_desc, _}
 import org.jgrapht.alg.DijkstraShortestPath
+import org.jgrapht.ext._
 import org.jgrapht.graph.{DefaultEdge, SimpleGraph}
 
 import scala.collection.JavaConversions._
@@ -194,6 +197,8 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       sender ! beacons
     case 'info =>
       sender ! FlareInfo(neighbors.map(_.node_id).size, graph.vertexSet().size(), beacons)
+    case 'dot =>
+      sender ! graph2dot(myself, graph, beacons.map(_.id))
   }
 
   def send(route: Seq[BinaryData], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
@@ -235,6 +240,38 @@ object FlareRouter {
 
   def channels2string(channels: Seq[channel_desc]): String =
     channels.map(c => s"${pubkey2string(c.nodeA)}->${pubkey2string(c.nodeB)}").mkString(" ")
+
+  def graph2dot(myself: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], beacons: Set[BinaryData]): BinaryData = {
+    val vertexIDProvider = new VertexNameProvider[BinaryData]() {
+      override def getVertexName(v: BinaryData): String = s""""${v.toString().take(6)}""""
+    }
+    val edgeLabelProvider = new EdgeNameProvider[NamedEdge]() {
+      override def getEdgeName(e: NamedEdge): String = e.id.toString().take(6)
+    }
+    val vertexAttributeProvider = new ComponentAttributeProvider[BinaryData]() {
+
+      import scala.collection.JavaConversions._
+
+      override def getComponentAttributes(t: BinaryData): util.Map[String, String] =
+        if (t == myself) {
+          Map("color" -> "blue")
+        } else if (beacons.contains(t)) {
+          Map("color" -> "red")
+        } else {
+          Map("color" -> "black")
+        }
+    }
+    val exporter = new DOTExporter[BinaryData, NamedEdge](vertexIDProvider, null, edgeLabelProvider, vertexAttributeProvider, null)
+    val bos = new ByteArrayOutputStream()
+    val writer = new OutputStreamWriter(bos)
+    try {
+      exporter.export(writer, graph)
+      bos.toByteArray
+    } finally {
+      writer.close()
+      bos.close()
+    }
+  }
 
   def merge(myself: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], table2: routing_table, radius: Int, beacons: Set[BinaryData]): SimpleGraph[BinaryData, NamedEdge] = {
     val updates = table2.channels.map(c => routing_table_update(c, OPEN))
