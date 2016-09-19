@@ -1,7 +1,6 @@
 package fr.acinq.eclair.router
 
 import java.io.{ByteArrayOutputStream, OutputStreamWriter}
-import java.math.BigInteger
 import java.util
 
 import akka.actor.{Actor, ActorLogging, ActorSelection, Props}
@@ -25,6 +24,8 @@ import scala.util.{Failure, Random, Success, Try}
   * Created by PM on 08/09/2016.
   */
 class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends Actor with ActorLogging {
+
+  val MAX_BEACON_DISTANCE = 100
 
   context.system.eventStream.subscribe(self, classOf[ChannelChangedState])
 
@@ -114,71 +115,71 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
       }
     case msg@beacon_req(origin, channels) =>
       log.debug(s"received beacon_req msg from $origin with channels=${channels2string(channels)}")
-      val nodes: Set[bitcoin_pubkey] = graph.vertexSet().toSet - origin
-      val distances = nodes.map(node => (node, distance(origin, node)))
-      val selected = distances.toList.sortBy(_._2).map(_._1)
       // adding routes to my table so that I can reply to the origin
       val updates = channels.map(channelDesc => routing_table_update(channelDesc, OPEN)).toList
-      // large radius so that we don't prune the beacon (it's ok if it is remote)
-      val (graph1, _) = include(myself, graph, updates, 100, Set())
-      // TODO : we should check that origin has not been pruned
+      // TODO : maybe we should allow an even larger radius, because their MAX_BEACON_DISTANCE could be larger than ours
+      val (graph1, _) = include(myself, graph, updates, MAX_BEACON_DISTANCE, Set())
+      val (channels1, route) = findRoute(graph1, myself, origin)
+      // looking for a strictly better beacon in our neighborhood
+      val nodes: Set[bitcoin_pubkey] = graph.vertexSet().toSet - origin - myself
+      val distances = nodes.map(node => (node, distance(origin, node)))
+      val distance2me = distance(origin, myself)
+      val selected = distances
+        .filter(_._2 < distance2me).toList
+        .sortBy(_._2).map(_._1)
+        .map(alternate => {
+          val (channels2, _) = findRoute(graph1, myself, alternate)
+          (alternate, channels2, channels1.size + channels2.size)
+        })
       selected.headOption match {
-        case Some(alternate) if alternate != myself =>
+        // order matters!
+        case Some((alternate, channels2, hops)) if hops > MAX_BEACON_DISTANCE =>
+          log.debug(s"alternate $alternate was better but it is too far from $origin (hops=$hops)")
+          send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, None, channels1))))
+        case Some((alternate, channels2, hops)) =>
           // we reply with a better beacon and give them a route
           // maybe not the shortest route but we want to be on the path (that's in our interest)
-          val (channels1, _) = findRoute(graph1, myself, alternate)
-          val hops = channels.size + channels1.size
-          if (hops < 100) {
-            log.debug(s"recommending alternate $alternate to $origin (hops=$hops)")
-            val (_, route) = findRoute(graph1, myself, origin)
-            send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels ++ channels1))))
-          } else {
-            log.debug(s"alternate $alternate was better but it is too far from $origin (hops=$hops)")
-            val (channels2, route) = findRoute(graph1, myself, origin)
-            send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
-          }
+          log.debug(s"recommending alternate $alternate to $origin (hops=$hops)")
+          send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, Some(alternate), channels1 ++ channels2))))
         case _ =>
           // we accept to be their beacon
-          val (channels2, route) = findRoute(graph1, myself, origin)
-          send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, None, channels2))))
+          send(route, neighbors, neighbor_onion(Ack(beacon_ack(myself, None, channels1))))
       }
     case msg@beacon_ack(origin, alternative_opt, channels) =>
       log.debug(s"received beacon_ack msg from $origin with alternative=$alternative_opt channels=${channels2string(channels)}")
       val updates = channels.map(channelDesc => routing_table_update(channelDesc, OPEN)).toList
-      val (graph1, _) = include(myself, graph, updates, 100, Set())
-      // TODO : we should check that origin/alternative have not been pruned
-      val beacons1 = alternative_opt match {
+      val (graph1, _) = include(myself, graph, updates, MAX_BEACON_DISTANCE, Set())
+      alternative_opt match {
         // order matters!
-        case Some(alternative) if distance(myself, alternative).compareTo(distance(myself, origin)) > 0 =>
+        case Some(alternative) if distance(myself, alternative) > distance(myself, origin) =>
           log.warning(s"$origin is lying ! dist(us, alt) > dist(us, origin)")
-          // we should probably ignore whatever they are sending us
-          beacons
-        case Some(alternative) if beacons.size < beaconCount =>
-          log.debug(s"sending alternative $alternative a beacon_req and adding origin $origin as beacon in the meantime")
-          val (channels1, route) = findRoute(graph1, myself, alternative)
-          send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
-          val (channels2, _) = findRoute(graph1, myself, origin)
-          beacons + Beacon(origin, distance(myself, origin), channels2.size)
+        // TODO we should probably blacklist them
+        case Some(alternative) if !graph1.containsVertex(alternative) =>
+          log.debug(s"the proposed alternative $alternative is not in our graph (probably too far away)")
         case Some(alternative) =>
           log.debug(s"sending alternative $alternative a beacon_req")
           val (channels1, route) = findRoute(graph1, myself, alternative)
           send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
-          beacons
-        case None if beacons.map(_.id).contains(origin) =>
-          log.debug(s"we already have beacon $origin")
-          beacons
-        case None if beacons.size < beaconCount =>
-          log.info(s"adding $origin as a beacon")
-          val (channels1, _) = findRoute(graph1, myself, origin)
-          beacons + Beacon(origin, distance(myself, origin), channels1.size)
-        case None if beacons.exists(b => b.distance.compareTo(distance(myself, origin)) > 0) =>
-          val deprecatedBeacon = beacons.find(b => b.distance.compareTo(distance(myself, origin)) > 0).get
-          log.info(s"replacing $deprecatedBeacon by $origin")
-          val (channels1, _) = findRoute(graph1, myself, origin)
-          beacons - deprecatedBeacon + Beacon(origin, distance(myself, origin), channels1.size)
-        case None =>
-          log.debug(s"ignoring beacon candidate $origin")
-          beacons
+        case None => {} // nothing to do
+      }
+      val beacons1 = if (!graph1.containsVertex(origin)) {
+        log.debug(s"origin $origin is not in our graph (probably too far away)")
+        beacons
+      } else if (beacons.map(_.id).contains(origin)) {
+        log.debug(s"we already have $origin as a beacon")
+        beacons
+      } else if (beacons.size < beaconCount) {
+        log.info(s"adding $origin as a beacon")
+        val (channels1, _) = findRoute(graph1, myself, origin)
+        beacons + Beacon(origin, distance(myself, origin), channels1.size)
+      } else if (beacons.exists(b => b.distance > distance(myself, origin))) {
+        val deprecatedBeacon = beacons.find(b => b.distance > distance(myself, origin)).get
+        log.info(s"replacing $deprecatedBeacon by $origin")
+        val (channels1, _) = findRoute(graph1, myself, origin)
+        beacons - deprecatedBeacon + Beacon(origin, distance(myself, origin), channels1.size)
+      } else {
+        log.debug(s"ignoring beacon candidate $origin")
+        beacons
       }
       // this will cause old beacons to be removed from the graph
       val (graph2, _) = include(myself, graph1, Nil, radius, beacons1.map(_.id))
@@ -219,7 +220,7 @@ object FlareRouter {
   // @formatter:off
   case class NamedEdge(val id: sha256_hash) extends DefaultEdge { override def toString: String = id.toString() }
   case class Neighbor(node_id: BinaryData, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
-  case class Beacon(id: bitcoin_pubkey, distance: BigInteger, hops: Int)
+  case class Beacon(id: bitcoin_pubkey, distance: BigInt, hops: Int)
   case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
   case class RouteRequest(target: bitcoin_pubkey, targetTable: routing_table)
   case class RouteResponse(route: Seq[bitcoin_pubkey])
@@ -328,11 +329,11 @@ object FlareRouter {
   def neighbor2channel(node_id: bitcoin_pubkey, neighbors: List[Neighbor]): Option[ActorSelection] =
     neighbors.find(_.node_id == node_id).map(_.actorSelection)
 
-  def distance(a: BinaryData, b: BinaryData): BigInteger = {
+  def distance(a: BinaryData, b: BinaryData): BigInt = {
     require(a.length == b.length)
     val c = new Array[Byte](a.length)
     for (i <- 0 until a.length) c(i) = ((a.data(i) ^ b.data(i)) & 0xff).toByte
-    new BigInteger(1, c)
+    BigInt(1, c)
   }
 
 }
