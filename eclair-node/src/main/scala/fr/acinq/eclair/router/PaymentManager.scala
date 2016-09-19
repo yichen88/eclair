@@ -9,7 +9,7 @@ import fr.acinq.eclair.channel.{CMD_ADD_HTLC, PaymentFailed, PaymentSent}
 import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
 import lightning.locktime.Locktime.Blocks
 import lightning.route_step.Next
-import lightning.{locktime, route_step, routing_table, sha256_hash}
+import lightning._
 
 // @formatter:off
 
@@ -18,7 +18,7 @@ case class CreatePayment(amountMsat: Int, h: sha256_hash, targetNodeId: BinaryDa
 sealed trait Data
 case class WaitingForRequest(currentBlockCount: Long) extends Data
 case class WaitingForRoute(sender: ActorRef, c: CreatePayment, currentBlockCount: Long) extends Data
-case class WaitingForChannel(sender: ActorRef,c: CreatePayment, r: Seq[BinaryData], currentBlockCount: Long) extends Data
+case class WaitingForChannel(sender: ActorRef,c: CreatePayment, r: Seq[bitcoin_pubkey], currentBlockCount: Long) extends Data
 case class WaitingForComplete(sender: ActorRef,c: CMD_ADD_HTLC, channel: ActorRef) extends Data
 
 sealed trait State
@@ -99,7 +99,7 @@ object PaymentManager {
 
   def props(router: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(classOf[PaymentManager], router, selector, initialBlockCount)
 
-  def buildRoute(finalAmountMsat: Int, nodeIds: Seq[BinaryData]): lightning.route = {
+  def buildRoute(finalAmountMsat: Int, nodeIds: Seq[bitcoin_pubkey]): lightning.route = {
 
     // TODO : use actual fee parameters that are specific to each node
     def fee(amountMsat: Int) = nodeFee(Globals.base_fee, Globals.proportional_fee, amountMsat).toInt

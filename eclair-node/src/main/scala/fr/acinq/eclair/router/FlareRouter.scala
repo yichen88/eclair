@@ -24,7 +24,7 @@ import scala.util.{Failure, Random, Success, Try}
 /**
   * Created by PM on 08/09/2016.
   */
-class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging {
+class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends Actor with ActorLogging {
 
   context.system.eventStream.subscribe(self, classOf[ChannelChangedState])
 
@@ -35,11 +35,9 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   import FlareRouter._
 
-  val myself = Globals.Node.publicKey
+  override def receive: Receive = main(new SimpleGraph[bitcoin_pubkey, NamedEdge](classOf[NamedEdge]), Nil, Nil, Set())
 
-  override def receive: Receive = main(new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge]), Nil, Nil, Set())
-
-  def main(graph: SimpleGraph[BinaryData, NamedEdge], neighbors: List[Neighbor], updatesBatch: List[routing_table_update], beacons: Set[Beacon]): Receive = {
+  def main(graph: SimpleGraph[bitcoin_pubkey, NamedEdge], neighbors: List[Neighbor], updatesBatch: List[routing_table_update], beacons: Set[Beacon]): Receive = {
     case ChannelChangedState(channel, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
       val neighbor = Neighbor(theirNodeId, d.commitments.anchorId, context.actorSelection(channel.path.parent), Nil)
       val channelDesc = channel_desc(neighbor.channel_id, myself, neighbor.node_id)
@@ -116,7 +114,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       }
     case msg@beacon_req(origin, channels) =>
       log.debug(s"received beacon_req msg from $origin with channels=${channels2string(channels)}")
-      val nodes: Set[BinaryData] = graph.vertexSet().toSet - origin
+      val nodes: Set[bitcoin_pubkey] = graph.vertexSet().toSet - origin
       val distances = nodes.map(node => (node, distance(origin, node)))
       val selected = distances.toList.sortBy(_._2).map(_._1)
       // adding routes to my table so that I can reply to the origin
@@ -188,7 +186,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       log.debug(s"my beacons are now ${beacons1.map(b => s"${pubkey2string(b.id)}(${b.hops})").mkString(",")}")
       context become main(graph2, neighbors, updatesBatch, beacons1)
     case RouteRequest(target, targetTable) =>
-      val g1 = graph.clone().asInstanceOf[SimpleGraph[BinaryData, NamedEdge]]
+      val g1 = graph.clone().asInstanceOf[SimpleGraph[bitcoin_pubkey, NamedEdge]]
       val g2 = merge(myself, g1, targetTable, 100, Set())
       Future(findRoute(g2, myself, target)) map (r => RouteResponse(r._2)) pipeTo sender
     case 'network =>
@@ -201,7 +199,7 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       sender ! graph2dot(myself, graph, beacons.map(_.id))
   }
 
-  def send(route: Seq[BinaryData], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
+  def send(route: Seq[bitcoin_pubkey], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
     require(route.size >= 2, s"$route should be of size >=2 (neighbors=$neighbors msg=$msg)")
     val onion = buildOnion(route.drop(2), msg)
     val neighbor = route(1)
@@ -219,40 +217,40 @@ object FlareRouter {
   def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], radius, beaconCount)
 
   // @formatter:off
-  case class NamedEdge(val id: BinaryData) extends DefaultEdge { override def toString: String = id.toString() }
+  case class NamedEdge(val id: sha256_hash) extends DefaultEdge { override def toString: String = id.toString() }
   case class Neighbor(node_id: BinaryData, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
-  case class Beacon(id: BinaryData, distance: BigInteger, hops: Int)
+  case class Beacon(id: bitcoin_pubkey, distance: BigInteger, hops: Int)
   case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
-  case class RouteRequest(target: BinaryData, targetTable: routing_table)
-  case class RouteResponse(route: Seq[BinaryData])
+  case class RouteRequest(target: bitcoin_pubkey, targetTable: routing_table)
+  case class RouteResponse(route: Seq[bitcoin_pubkey])
   // @formatter:on
 
-  def graph2table(graph: SimpleGraph[BinaryData, NamedEdge]): routing_table = {
+  def graph2table(graph: SimpleGraph[bitcoin_pubkey, NamedEdge]): routing_table = {
     val channels = graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge)))
     routing_table(channels.toSeq)
   }
 
-  def graph2string(graph: SimpleGraph[BinaryData, NamedEdge]): String =
+  def graph2string(graph: SimpleGraph[bitcoin_pubkey, NamedEdge]): String =
     s"node_count=${graph.vertexSet.size} edges: " + channels2string(graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge))).toSeq)
 
-  def pubkey2string(pubkey: BinaryData): String =
+  def pubkey2string(pubkey: bitcoin_pubkey): String =
     pubkey.toString().take(6)
 
   def channels2string(channels: Seq[channel_desc]): String =
     channels.map(c => s"${pubkey2string(c.nodeA)}->${pubkey2string(c.nodeB)}").mkString(" ")
 
-  def graph2dot(myself: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], beacons: Set[BinaryData]): BinaryData = {
-    val vertexIDProvider = new VertexNameProvider[BinaryData]() {
-      override def getVertexName(v: BinaryData): String = s""""${v.toString().take(6)}""""
+  def graph2dot(myself: bitcoin_pubkey, graph: SimpleGraph[bitcoin_pubkey, NamedEdge], beacons: Set[bitcoin_pubkey]): BinaryData = {
+    val vertexIDProvider = new VertexNameProvider[bitcoin_pubkey]() {
+      override def getVertexName(v: bitcoin_pubkey): String = s""""${v.toString().take(6)}""""
     }
     val edgeLabelProvider = new EdgeNameProvider[NamedEdge]() {
       override def getEdgeName(e: NamedEdge): String = e.id.toString().take(6)
     }
-    val vertexAttributeProvider = new ComponentAttributeProvider[BinaryData]() {
+    val vertexAttributeProvider = new ComponentAttributeProvider[bitcoin_pubkey]() {
 
       import scala.collection.JavaConversions._
 
-      override def getComponentAttributes(t: BinaryData): util.Map[String, String] =
+      override def getComponentAttributes(t: bitcoin_pubkey): util.Map[String, String] =
         if (t == myself) {
           Map("color" -> "blue")
         } else if (beacons.contains(t)) {
@@ -261,7 +259,7 @@ object FlareRouter {
           Map("color" -> "black")
         }
     }
-    val exporter = new DOTExporter[BinaryData, NamedEdge](vertexIDProvider, null, edgeLabelProvider, vertexAttributeProvider, null)
+    val exporter = new DOTExporter[bitcoin_pubkey, NamedEdge](vertexIDProvider, null, edgeLabelProvider, vertexAttributeProvider, null)
     val bos = new ByteArrayOutputStream()
     val writer = new OutputStreamWriter(bos)
     try {
@@ -273,13 +271,13 @@ object FlareRouter {
     }
   }
 
-  def merge(myself: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], table2: routing_table, radius: Int, beacons: Set[BinaryData]): SimpleGraph[BinaryData, NamedEdge] = {
+  def merge(myself: bitcoin_pubkey, graph: SimpleGraph[bitcoin_pubkey, NamedEdge], table2: routing_table, radius: Int, beacons: Set[bitcoin_pubkey]): SimpleGraph[bitcoin_pubkey, NamedEdge] = {
     val updates = table2.channels.map(c => routing_table_update(c, OPEN))
     include(myself, graph, updates, radius, beacons)._1
   }
 
-  def include(myself: BinaryData, graph: SimpleGraph[BinaryData, NamedEdge], updates: Seq[routing_table_update], radius: Int, beacons: Set[BinaryData]): (SimpleGraph[BinaryData, NamedEdge], Seq[routing_table_update]) = {
-    val graph1 = graph.clone().asInstanceOf[SimpleGraph[BinaryData, NamedEdge]]
+  def include(myself: bitcoin_pubkey, graph: SimpleGraph[bitcoin_pubkey, NamedEdge], updates: Seq[routing_table_update], radius: Int, beacons: Set[bitcoin_pubkey]): (SimpleGraph[bitcoin_pubkey, NamedEdge], Seq[routing_table_update]) = {
+    val graph1 = graph.clone().asInstanceOf[SimpleGraph[bitcoin_pubkey, NamedEdge]]
     updates.collect {
       case routing_table_update(channel, OPEN) =>
         graph1.addVertex(channel.nodeA)
@@ -289,12 +287,12 @@ object FlareRouter {
         graph1.removeEdge(NamedEdge(channel.channelId))
     }
     // we whitelist all nodes on the path to beacons
-    val whitelist: Set[BinaryData] = beacons.map(beacon => Try(findRoute(graph1, myself, beacon))).collect {
+    val whitelist: Set[bitcoin_pubkey] = beacons.map(beacon => Try(findRoute(graph1, myself, beacon))).collect {
       case Success((_, nodes)) => nodes
     }.flatten
 
     val distances = (graph1.vertexSet() -- whitelist - myself).collect {
-      case vertex: BinaryData if vertex != myself => (vertex, Try(new DijkstraShortestPath(graph1, myself, vertex).getPath.getEdgeList.size()))
+      case vertex: bitcoin_pubkey if vertex != myself => (vertex, Try(new DijkstraShortestPath(graph1, myself, vertex).getPath.getEdgeList.size()))
     }
     distances.collect {
       case (vertex, Failure(t)) => graph1.removeVertex(vertex)
@@ -308,7 +306,7 @@ object FlareRouter {
     (graph1, updates1)
   }
 
-  def findRoute(graph: SimpleGraph[BinaryData, NamedEdge], source: BinaryData, target: BinaryData): (Seq[channel_desc], Seq[BinaryData]) = {
+  def findRoute(graph: SimpleGraph[bitcoin_pubkey, NamedEdge], source: bitcoin_pubkey, target: bitcoin_pubkey): (Seq[channel_desc], Seq[bitcoin_pubkey]) = {
     Option(new DijkstraShortestPath(graph, source, target).getPath) match {
       case Some(path) =>
         val channels = path.getEdgeList.map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge)))
@@ -321,13 +319,13 @@ object FlareRouter {
     }
   }
 
-  def buildOnion(nodes: Seq[BinaryData], msg: neighbor_onion): neighbor_onion = {
+  def buildOnion(nodes: Seq[bitcoin_pubkey], msg: neighbor_onion): neighbor_onion = {
     nodes.reverse.foldLeft(msg) {
       case (o, next) => neighbor_onion(Forward(beacon_forward(next, o)))
     }
   }
 
-  def neighbor2channel(node_id: BinaryData, neighbors: List[Neighbor]): Option[ActorSelection] =
+  def neighbor2channel(node_id: bitcoin_pubkey, neighbors: List[Neighbor]): Option[ActorSelection] =
     neighbors.find(_.node_id == node_id).map(_.actorSelection)
 
   def distance(a: BinaryData, b: BinaryData): BigInteger = {
