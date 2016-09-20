@@ -21,7 +21,7 @@ import scala.util.{Failure, Random, Success, Try}
 /**
   * Created by PM on 08/09/2016.
   */
-class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging {
+class FlareRouter(myself: BinaryData, radius: Int, beaconCount: Int) extends Actor with ActorLogging {
 
   context.system.eventStream.subscribe(self, classOf[ChannelChangedState])
 
@@ -30,8 +30,6 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
   //context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_beacons)
 
   import FlareRouter._
-
-  val myself = Globals.Node.publicKey
 
   override def receive: Receive = main(new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge]), Nil, Nil, Set())
 
@@ -45,13 +43,27 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
       context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
+    case ChannelOpened(channel, them) =>
+      val theirNodeId = if (pubkey2bin(channel.nodeA) == myself)
+        channel.nodeB
+      else if (pubkey2bin(channel.nodeB) == myself)
+        channel.nodeA
+      else throw new RuntimeException(s"invalid channel $channel: it does ot contain myself: $myself")
+
+      val neighbor = Neighbor(theirNodeId, channel.channelId, them, Nil)
+      val updates = routing_table_update(channel, OPEN) :: Nil
+      val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
+      neighbor.actorSelection ! neighbor_hello(graph2table(graph1))
+      log.debug(s"graph is now ${graph2string(graph1)}")
+      context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
+      context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
       val graph1 = merge(myself, graph, table1, radius, beacons.map(_.id))
       // we send beacon req to every newly discovered node
-      val new_nodes = graph1.vertexSet().toSet -- graph.vertexSet().toSet
+      val new_nodes = (graph1.vertexSet().toSet -- graph.vertexSet().toSet)
       for (node <- new_nodes) {
-        log.debug(s"sending beacon_req message to new node $node")
+        log.debug(s"$myself sending beacon_req message to new node $node")
         val (channels1, route) = findRoute(graph1, myself, node)
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
@@ -111,8 +123,10 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
       val selected = distances.toList.sortBy(_._2).map(_._1)
       // adding routes to my table so that I can reply to the origin
       val updates = channels.map(channelDesc => routing_table_update(channelDesc, OPEN)).toList
+      log.debug(s"$myself updates: $updates")
       // large radius so that we don't prune the beacon (it's ok if it is remote)
       val (graph1, _) = include(myself, graph, updates, 100, Set())
+      log.debug(s"tmp graph is ${graph2string(graph1)}")
       // TODO : we should check that origin has not been pruned
       selected.headOption match {
         case Some(alternate) if alternate != myself =>
@@ -191,6 +205,9 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
   def send(route: Seq[BinaryData], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
     val onion = buildOnion(route.drop(2), msg)
+    if (route.size < 2) {
+      log.warning(s"invalid route $route")
+    }
     val neighbor = route(1)
     neighbor2channel(neighbor, neighbors) match {
       case Some(actorSelection) => actorSelection ! onion
@@ -203,7 +220,11 @@ class FlareRouter(radius: Int, beaconCount: Int) extends Actor with ActorLogging
 
 object FlareRouter {
 
-  def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], radius, beaconCount)
+  def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], Globals.Node.publicKey, radius, beaconCount)
+
+  def props(myself: BinaryData, radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], myself, radius, beaconCount)
+
+  case class ChannelOpened(channel: channel_desc, them: ActorSelection)
 
   case class NamedEdge(val id: BinaryData) extends DefaultEdge {
     override def toString: String = id.toString()
@@ -270,15 +291,18 @@ object FlareRouter {
   }
 
   def findRoute(graph: SimpleGraph[BinaryData, NamedEdge], source: BinaryData, target: BinaryData): (Seq[channel_desc], Seq[BinaryData]) = {
-    Option(new DijkstraShortestPath(graph, source, target).getPath) match {
-      case Some(path) =>
+    Try(Option(new DijkstraShortestPath(graph, source, target).getPath)) match {
+      case Success(Some(path)) =>
         val channels = path.getEdgeList.map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge)))
         val nodes = path.getEdgeList.foldLeft(List(path.getStartVertex)) {
           case (rest :+ v, edge) if graph.getEdgeSource(edge) == v => rest :+ v :+ graph.getEdgeTarget(edge)
           case (rest :+ v, edge) if graph.getEdgeTarget(edge) == v => rest :+ v :+ graph.getEdgeSource(edge)
         }
         (channels, nodes)
-      case None => throw new RuntimeException(s"route not found to $target")
+      case Success(None) => throw new RuntimeException(s"route not found to $target")
+      case Failure(t) => {
+        throw new RuntimeException(s"route not found from $source to $target")
+      }
     }
   }
 
