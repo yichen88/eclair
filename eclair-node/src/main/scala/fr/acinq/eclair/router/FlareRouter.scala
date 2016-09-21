@@ -48,13 +48,27 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
       context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
+    case ChannelOpened(channel, them) =>
+      val theirNodeId = if (channel.nodeA == myself)
+        channel.nodeB
+      else if (channel.nodeB == myself)
+        channel.nodeA
+      else throw new RuntimeException(s"invalid channel $channel: it does ot contain myself: $myself")
+
+      val neighbor = Neighbor(theirNodeId, channel.channelId, them, Nil)
+      val updates = routing_table_update(channel, OPEN) :: Nil
+      val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
+      neighbor.actorSelection ! neighbor_hello(graph2table(graph1))
+      log.debug(s"graph is now ${graph2string(graph1)}")
+      context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
+      context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
       val graph1 = merge(myself, graph, table1, radius, beacons.map(_.id))
       // we send beacon req to every newly discovered node
-      val new_nodes = graph1.vertexSet().toSet -- graph.vertexSet().toSet
+      val new_nodes = (graph1.vertexSet().toSet -- graph.vertexSet().toSet)
       for (node <- new_nodes) {
-        log.debug(s"sending beacon_req message to new node $node")
+        log.debug(s"$myself sending beacon_req message to new node $node")
         val (channels1, route) = findRoute(graph1, myself, node)
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
@@ -203,6 +217,9 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
   def send(route: Seq[bitcoin_pubkey], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
     require(route.size >= 2, s"$route should be of size >=2 (neighbors=$neighbors msg=$msg)")
     val onion = buildOnion(route.drop(2), msg)
+    if (route.size < 2) {
+      log.warning(s"invalid route $route")
+    }
     val neighbor = route(1)
     neighbor2channel(neighbor, neighbors) match {
       case Some(actorSelection) => actorSelection ! onion
@@ -215,11 +232,15 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
 
 object FlareRouter {
 
-  def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], radius, beaconCount)
+  def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], Globals.Node.publicKey, radius, beaconCount)
+
+  def props(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], myself, radius, beaconCount)
+
+  case class ChannelOpened(channel: channel_desc, them: ActorSelection)
 
   // @formatter:off
   case class NamedEdge(val id: sha256_hash) extends DefaultEdge { override def toString: String = id.toString() }
-  case class Neighbor(node_id: BinaryData, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
+  case class Neighbor(node_id: bitcoin_pubkey, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
   case class Beacon(id: bitcoin_pubkey, distance: BigInt, hops: Int)
   case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
   case class RouteRequest(target: bitcoin_pubkey, targetTable: routing_table)
@@ -235,17 +256,17 @@ object FlareRouter {
     s"node_count=${graph.vertexSet.size} edges: " + channels2string(graph.edgeSet().map(edge => channel_desc(edge.id, graph.getEdgeSource(edge), graph.getEdgeTarget(edge))).toSeq)
 
   def pubkey2string(pubkey: bitcoin_pubkey): String =
-    pubkey.toString().take(6)
+    pubkey2bin(pubkey).toString().take(6)
 
   def channels2string(channels: Seq[channel_desc]): String =
     channels.map(c => s"${pubkey2string(c.nodeA)}->${pubkey2string(c.nodeB)}").mkString(" ")
 
   def graph2dot(myself: bitcoin_pubkey, graph: SimpleGraph[bitcoin_pubkey, NamedEdge], beacons: Set[bitcoin_pubkey]): BinaryData = {
     val vertexIDProvider = new VertexNameProvider[bitcoin_pubkey]() {
-      override def getVertexName(v: bitcoin_pubkey): String = s""""${v.toString().take(6)}""""
+      override def getVertexName(v: bitcoin_pubkey): String = s""""${pubkey2bin(v).toString.take(6)}""""
     }
     val edgeLabelProvider = new EdgeNameProvider[NamedEdge]() {
-      override def getEdgeName(e: NamedEdge): String = e.id.toString().take(6)
+      override def getEdgeName(e: NamedEdge): String = sha2562bin(e.id).toString().take(6)
     }
     val vertexAttributeProvider = new ComponentAttributeProvider[bitcoin_pubkey]() {
 

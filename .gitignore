@@ -27,4 +27,5 @@ DeleteMe*.*
 *~
 
 result.txt
-graph.dot
+*.gv
+*.dot
