@@ -134,6 +134,6 @@ object FlareRouterSpec {
 
   def nodeId(i: Int): BinaryData = {
     val a = BigInteger.valueOf(i).toByteArray
-    a ++ Array.fill[Byte](32 - a.length)(0)
+    (Array.fill[Byte](32 - a.length)(0) ++ a).reverse
   }
 }

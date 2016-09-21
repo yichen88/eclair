@@ -301,7 +301,7 @@ object FlareRouter {
         (channels, nodes)
       case Success(None) => throw new RuntimeException(s"route not found to $target")
       case Failure(t) => {
-        throw new RuntimeException(s"route not found from $source to $target")
+        throw new RuntimeException(s"route not found from $source to $target", t)
       }
     }
   }
