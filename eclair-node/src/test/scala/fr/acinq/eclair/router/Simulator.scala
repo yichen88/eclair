@@ -21,7 +21,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.io.{Source, StdIn}
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Random, Success}
 
 /**
   * Created by fabrice on 19/09/16.
@@ -128,7 +128,7 @@ object Simulator extends App {
   }
 
   do {
-    Thread.sleep(30000)
+    Thread.sleep(10000)
   } while (callToAction)
 
   implicit val timeout = Timeout(5 second)
@@ -150,7 +150,7 @@ object Simulator extends App {
   var success = 0
   var failures = 0
   for (i <- 0 to maxId) {
-    for (j <- (i + 1) to maxId) {
+    for (j <- Random.shuffle(i + 1 to maxId)) {
       val future = for {
         channels <- (routers(j) ? 'network).mapTo[Seq[channel_desc]]
         request = RouteRequest(nodeIds(j), routing_table(channels))
@@ -167,7 +167,9 @@ object Simulator extends App {
           failures = failures + 1
       }
       Await.ready(future, 5 seconds)
-      println(s"success: $success failures : $failures rate: ${(100 * success) / (success + failures)}%")
+      val successRate = (100 * success) / (success + failures)
+      val progress = 100 * i.toDouble / (maxId - 1)
+      println(f"success: $success failures : $failures rate: $successRate%3.2f%% progress=$progress%3.2f%%")
     }
   }
   system.terminate()
