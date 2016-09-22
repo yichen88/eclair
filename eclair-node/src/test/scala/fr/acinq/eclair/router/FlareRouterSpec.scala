@@ -15,11 +15,11 @@ import lightning.neighbor_onion.Next.{Forward, Req}
 import lightning.routing_table_update.update_type.OPEN
 import org.jgrapht.graph.SimpleGraph
 import org.junit.runner.RunWith
-import org.scalatest.{BeforeAndAfterAll, FunSuite, FunSuiteLike}
 import org.scalatest.junit.JUnitRunner
+import org.scalatest.{BeforeAndAfterAll, FunSuiteLike}
 
-import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
+import scala.concurrent.{Await, Future}
 import scala.util.Random
 
 /**
@@ -27,6 +27,10 @@ import scala.util.Random
   */
 @RunWith(classOf[JUnitRunner])
 class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike with BeforeAndAfterAll {
+
+  override def afterAll {
+    TestKit.shutdownActorSystem(system)
+  }
 
   import FlareRouterSpec._
 
@@ -129,9 +133,27 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     assert(infos(0).neighbors === 2)
   }
 
-  override def afterAll {
-    TestKit.shutdownActorSystem(system)
+  test("find remote beacons") {
+    val length = 30
+    val radius = 2
+    val maxBeacons = 1
+    val nodeIds = (0 to length).map(nodeId).map(bin2pubkey)
+    val closestToFirst = nodeIds.sortBy(id => distance(nodeIds(0), id))
+    val order = (closestToFirst.drop(1) :+ nodeIds(0)).reverse
+    val links = order.sliding(2)
+    // so we have A -> B -> C -> D -> .... -> Z with d(A,B) > d(A,C) > ... > d(A, Z)
+    // in other words A's best beacon is Z
+    val routers: Map[bitcoin_pubkey, ActorRef] = order.map(nodeId => (nodeId, system.actorOf(FlareRouter.props(nodeId, radius, maxBeacons), pubkey2string(nodeId)))).toMap
+    def createChannel(a: bitcoin_pubkey, b: bitcoin_pubkey): Unit = {
+      routers(a) ! genChannelChangedState(routers(b), b, FlareRouterSpec.channelId(a, b))
+      routers(b) ! genChannelChangedState(routers(a), a, FlareRouterSpec.channelId(a, b))
+    }
+    for (link <- links) createChannel(link.head, link.last)
+    implicit val timeout = Timeout(1 second)
+    awaitCond(Await.result(routers(order.head) ? 'beacons, 1 second).asInstanceOf[Set[Beacon]].map(_.id).contains(order.last), 10 seconds)
   }
+
+
 }
 
 object FlareRouterSpec {
@@ -143,11 +165,7 @@ object FlareRouterSpec {
 
   def nodeId(i: Int): BinaryData = {
     val a = BigInteger.valueOf(i).toByteArray
-    require(a.length <= 3)
-    val c = Array.fill[Byte](3 - a.length)(0.toByte)
-    val b = new Array[Byte](32 - 3)
-    random.nextBytes(b)
-    c ++ a ++ b
+    Crypto.sha256(a)
   }
 
   def genChannelChangedState(them: ActorRef, theirNodeId: BinaryData, channelId: BinaryData): ChannelChangedState =
