@@ -9,7 +9,7 @@
     </appender>
 
     <logger name="com.ning.http" level="INFO"/>
-    <logger name="fr.acinq.eclair.router" level="DEBUG"/>
+    <logger name="fr.acinq.eclair.router" level="INFO"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
