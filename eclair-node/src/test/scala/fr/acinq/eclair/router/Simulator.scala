@@ -34,6 +34,7 @@ object Simulator extends App {
   var p = 0.2
   var filename = ""
   var gen = false
+  var save = false
 
   def parse(arguments: List[String]): Unit = arguments match {
     case "-n" :: value :: tail => n = value.toInt; parse(tail)
@@ -42,6 +43,7 @@ object Simulator extends App {
     case "-r" :: value :: tail => radius = value.toInt; parse(tail)
     case "-nb" :: value :: tail => maxBeacons = value.toInt; parse(tail)
     case "-gen" :: tail => gen = true; parse(tail)
+    case "-save" :: tail => save = true; parse(tail)
     case value :: tail => filename = value; parse(tail)
     case Nil => ()
   }
@@ -74,15 +76,32 @@ object Simulator extends App {
       readLinks(filename)
   }
 
-  // to display the graph use the circo layout: xdot -f circo simulator.dot
-  val writer = new FileWriter(new File("simulator.dot"))
-  writer.append("graph G {\n")
-  links.foreach {
-    case (source, targets) => targets.filter(_ > source).foreach(target => writer.append(s""""$source" -- "$target"\n"""))
+  def saveAsDot(graph: Map[Int, Set[Int]], filename: String): Unit = {
+    val writer = new FileWriter(new File(filename))
+    writer.append("graph G {\n")
+    graph.foreach {
+      case (source, targets) => targets.filter(_ > source).foreach(target => writer.append(s""""$source" -- "$target"\n"""))
+    }
+    writer.append("}\n")
+    writer.close()
   }
-  writer.append("}\n")
-  writer.close()
 
+  def saveAsText(graph: Map[Int, Set[Int]], filename: String): Unit = {
+    val writer = new FileWriter(new File(filename))
+    graph.foreach {
+      case (source, targets) =>
+        writer.append(s"$source")
+        targets.filter(_ > source).foreach(target => writer.append(s" $target"))
+        writer.append("\n")
+    }
+    writer.close()
+  }
+
+  // to display the graph use the circo layout: xdot -f circo simulator.dot
+  if (save) {
+    saveAsDot(links, "simulator.dot")
+    saveAsText(links, "simulator.txt")
+  }
 
   val fullGraph = new SimpleGraph[Int, DefaultEdge](classOf[DefaultEdge])
   links.foreach {
@@ -108,7 +127,6 @@ object Simulator extends App {
 
   links.foreach { case (source, targets) => targets.filter(_ > source).foreach(target => createChannel(source, target)) }
 
-
   Thread.sleep(5000)
   for (router <- routers) router ! 'tick_reset
   Thread.sleep(5000)
@@ -120,19 +138,20 @@ object Simulator extends App {
 
   implicit val timeout = Timeout(5 seconds)
 
-  val futures = (0 to maxId).map(i => {
-    val future = for {
-      dot <- (routers(i) ? 'dot).mapTo[BinaryData]
-    } yield Files.write(dot, new File(s"$i.dot"))
+  if (save) {
+    val futures = (0 to maxId).map(i => {
+      val future = for {
+        dot <- (routers(i) ? 'dot).mapTo[BinaryData]
+      } yield Files.write(dot, new File(s"$i.dot"))
 
-    future.onFailure {
-      case t: Throwable =>
-        println(s"cannot write routing table for $i: $t")
-    }
-    future
-  })
-  Await.ready(Future.sequence(futures), 15 second)
-
+      future.onFailure {
+        case t: Throwable =>
+          println(s"cannot write routing table for $i: $t")
+      }
+      future
+    })
+    Await.ready(Future.sequence(futures), 15 second)
+  }
 
   var success = 0
   var failures = 0
@@ -154,7 +173,9 @@ object Simulator extends App {
           failures = failures + 1
       }
       Await.ready(future, 5 seconds)
-      println(s"success: $success failures : $failures rate: ${(100 * success) / (success + failures)}%")
+      println(s"success: $success failures : $failures rate: ${
+        (100 * success) / (success + failures)
+      }%")
     }
   }
   system.terminate()
