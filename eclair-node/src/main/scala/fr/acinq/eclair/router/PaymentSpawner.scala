@@ -22,5 +22,5 @@ class PaymentSpawner(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
 }
 
 object PaymentSpawner {
-  def props(router: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(classOf[PaymentSpawner], router, selector, initialBlockCount)
+  def props(router: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(new PaymentSpawner(router, selector, initialBlockCount))
 }

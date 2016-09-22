@@ -55,7 +55,7 @@ class Register(blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef)
 
 object Register {
 
-  def props(blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef) = Props(classOf[Register], blockchain, paymentHandler, router)
+  def props(blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef) = Props(new Register(blockchain, paymentHandler, router))
 
   // @formatter:off
   case class CreateChannel(connection: ActorRef, anchorAmount: Option[Satoshi])

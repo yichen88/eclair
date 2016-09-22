@@ -87,6 +87,6 @@ class PeerWatcher(client: ExtendedBitcoinClient, blockCount: Long)(implicit ec: 
 
 object PeerWatcher {
 
-  def props(client: ExtendedBitcoinClient, initialBlockCount: Long)(implicit ec: ExecutionContext = ExecutionContext.global) = Props(classOf[PeerWatcher], client, initialBlockCount, ec)
+  def props(client: ExtendedBitcoinClient, initialBlockCount: Long)(implicit ec: ExecutionContext = ExecutionContext.global) = Props(new PeerWatcher(client, initialBlockCount))
 
 }

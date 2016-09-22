@@ -30,8 +30,8 @@ class Client(remote: InetSocketAddress, amount: Satoshi, register: ActorRef) ext
 
 object Client extends App {
 
-  def props(address: InetSocketAddress, amount: Satoshi, register: ActorRef): Props = Props(classOf[Client], address, amount, register)
+  def props(address: InetSocketAddress, amount: Satoshi, register: ActorRef): Props = Props(new Client(address, amount, register))
 
-  def props(host: String, port: Int, amount: Satoshi, register: ActorRef): Props = Props(classOf[Client], new InetSocketAddress(host, port), amount, register)
+  def props(host: String, port: Int, amount: Satoshi, register: ActorRef): Props = Props(new Client(new InetSocketAddress(host, port), amount, register))
 
 }

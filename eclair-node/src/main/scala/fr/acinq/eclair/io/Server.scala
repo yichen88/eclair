@@ -31,9 +31,9 @@ class Server(address: InetSocketAddress, register: ActorRef) extends Actor with 
 
 object Server extends App {
 
-  def props(address: InetSocketAddress, register: ActorRef): Props = Props(classOf[Server], address, register)
+  def props(address: InetSocketAddress, register: ActorRef): Props = Props(new Server(address, register))
 
-  def props(host: String, port: Int, register: ActorRef): Props = Props(classOf[Server], new InetSocketAddress(host, port), register)
+  def props(host: String, port: Int, register: ActorRef): Props = Props(new Server(new InetSocketAddress(host, port), register))
 
 }
 

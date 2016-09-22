@@ -220,9 +220,9 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
 
 object FlareRouter {
 
-  def props(radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], Globals.Node.publicKey, radius, beaconCount)
+  def props(radius: Int, beaconCount: Int) = Props(new FlareRouter(Globals.Node.publicKey, radius, beaconCount))
 
-  def props(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], myself, radius, beaconCount)
+  def props(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) = Props(new FlareRouter(myself, radius, beaconCount))
 
   // @formatter:off
   case class NamedEdge(val id: sha256_hash) extends DefaultEdge { override def toString: String = id.toString() }

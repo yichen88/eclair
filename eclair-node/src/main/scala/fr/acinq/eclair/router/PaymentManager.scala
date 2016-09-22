@@ -96,7 +96,7 @@ class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
 
 object PaymentManager {
 
-  def props(router: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(classOf[PaymentManager], router, selector, initialBlockCount)
+  def props(router: ActorRef, selector: ActorRef, initialBlockCount: Long) = Props(new PaymentManager(router, selector, initialBlockCount))
 
   def buildRoute(finalAmountMsat: Int, nodeIds: Seq[bitcoin_pubkey]): lightning.route = {
 
