@@ -62,7 +62,7 @@ class GUIUpdater(primaryStage: Stage, helloWorld: MainWindow, setup: Setup) exte
         }
       })
 
-    case ChannelChangedState(channel, _, previousState, currentState, currentData) =>
+    case ChannelChangedState(channel, _, _, previousState, currentState, currentData) =>
       val pane = m(channel)
       Platform.runLater(new Runnable() {
         override def run(): Unit = {

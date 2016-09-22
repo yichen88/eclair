@@ -3,7 +3,7 @@ package fr.acinq.eclair.router
 import java.io.{ByteArrayOutputStream, OutputStreamWriter}
 import java.util
 
-import akka.actor.{Actor, ActorLogging, ActorSelection, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, ActorSelection, Props}
 import akka.pattern._
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
@@ -39,26 +39,12 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
   override def receive: Receive = main(new SimpleGraph[bitcoin_pubkey, NamedEdge](classOf[NamedEdge]), Nil, Nil, Set())
 
   def main(graph: SimpleGraph[bitcoin_pubkey, NamedEdge], neighbors: List[Neighbor], updatesBatch: List[routing_table_update], beacons: Set[Beacon]): Receive = {
-    case ChannelChangedState(channel, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
-      val neighbor = Neighbor(theirNodeId, d.commitments.anchorId, context.actorSelection(channel.path.parent), Nil)
+    case ChannelChangedState(_, connection, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
+      val neighbor = Neighbor(theirNodeId, d.commitments.anchorId, connection, Nil)
       val channelDesc = channel_desc(neighbor.channel_id, myself, neighbor.node_id)
       val updates = routing_table_update(channelDesc, OPEN) :: Nil
       val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
-      neighbor.actorSelection ! neighbor_hello(graph2table(graph1))
-      log.debug(s"graph is now ${graph2string(graph1)}")
-      context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
-      context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
-    case ChannelOpened(channel, them) =>
-      val theirNodeId = if (channel.nodeA == myself)
-        channel.nodeB
-      else if (channel.nodeB == myself)
-        channel.nodeA
-      else throw new RuntimeException(s"invalid channel $channel: it does ot contain myself: $myself")
-
-      val neighbor = Neighbor(theirNodeId, channel.channelId, them, Nil)
-      val updates = routing_table_update(channel, OPEN) :: Nil
-      val (graph1, updates1) = include(myself, graph, updates, radius, beacons.map(_.id))
-      neighbor.actorSelection ! neighbor_hello(graph2table(graph1))
+      neighbor.connection ! neighbor_hello(graph2table(graph1))
       log.debug(s"graph is now ${graph2string(graph1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
       context become main(graph1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
@@ -97,7 +83,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
         val diff = updatesBatch.filterNot(neighbor.sent.contains(_))
         if (diff.size > 0) {
           log.debug(s"sending $diff to ${neighbor.node_id}")
-          neighbor.actorSelection ! neighbor_update(diff)
+          neighbor.connection ! neighbor_update(diff)
         }
         neighbor.copy(sent = neighbor.sent ::: diff)
       })
@@ -107,10 +93,10 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
       val channel_ids = graph2table(graph).channels.map(_.channelId)
       for (neighbor <- neighbors) {
         log.debug(s"sending nighbor_reset message to neighbor $neighbor")
-        neighbor.actorSelection ! neighbor_reset(channel_ids)
+        neighbor.connection ! neighbor_reset(channel_ids)
       }
     case 'tick_beacons =>
-      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(1)) {
+      for (node <- Random.shuffle(graph.vertexSet().toSet - myself)) {
         log.debug(s"sending beacon_req message to random node $node")
         val (channels1, route) = findRoute(graph, myself, node)
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
@@ -236,11 +222,9 @@ object FlareRouter {
 
   def props(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) = Props(classOf[FlareRouter], myself, radius, beaconCount)
 
-  case class ChannelOpened(channel: channel_desc, them: ActorSelection)
-
   // @formatter:off
   case class NamedEdge(val id: sha256_hash) extends DefaultEdge { override def toString: String = id.toString() }
-  case class Neighbor(node_id: bitcoin_pubkey, channel_id: BinaryData, actorSelection: ActorSelection, sent: List[routing_table_update])
+  case class Neighbor(node_id: bitcoin_pubkey, channel_id: BinaryData, connection: ActorRef, sent: List[routing_table_update])
   case class Beacon(id: bitcoin_pubkey, distance: BigInt, hops: Int)
   case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
   case class RouteRequest(target: bitcoin_pubkey, targetTable: routing_table)
@@ -347,8 +331,8 @@ object FlareRouter {
     }
   }
 
-  def neighbor2channel(node_id: bitcoin_pubkey, neighbors: List[Neighbor]): Option[ActorSelection] =
-    neighbors.find(_.node_id == node_id).map(_.actorSelection)
+  def neighbor2channel(node_id: bitcoin_pubkey, neighbors: List[Neighbor]): Option[ActorRef] =
+    neighbors.find(_.node_id == node_id).map(_.connection)
 
   def distance(a: BinaryData, b: BinaryData): BigInt = {
     require(a.length == b.length)
