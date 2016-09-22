@@ -2,7 +2,7 @@ package fr.acinq.eclair.router
 
 import java.math.BigInteger
 
-import akka.actor.{ActorRef, ActorSystem}
+import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.pattern.ask
 import akka.testkit.TestKit
 import akka.util.Timeout
@@ -113,7 +113,7 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     val maxBeacons = 5
     val nodeIds = for (i <- 0 to 6) yield nodeId(i)
     val links = (0, 1) :: (0, 2) :: (1, 3) :: (1, 6) :: (2, 4) :: (4, 5) :: Nil
-    val routers = nodeIds map (nodeId => system.actorOf(FlareRouter.props(nodeId, radius, maxBeacons), nodeId.toString().take(6)))
+    val routers = nodeIds map (nodeId => system.actorOf(Props(new FlareRouter(nodeId, radius, maxBeacons, false)), nodeId.toString().take(6)))
 
     def createChannel(a: Int, b: Int): Unit = {
       routers(a) ! genChannelChangedState(routers(b), nodeIds(b), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
@@ -143,7 +143,7 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     val links = order.sliding(2)
     // so we have A -> B -> C -> D -> .... -> Z with d(A,B) > d(A,C) > ... > d(A, Z)
     // in other words A's best beacon is Z
-    val routers: Map[bitcoin_pubkey, ActorRef] = order.map(nodeId => (nodeId, system.actorOf(FlareRouter.props(nodeId, radius, maxBeacons), pubkey2string(nodeId)))).toMap
+    val routers: Map[bitcoin_pubkey, ActorRef] = order.map(nodeId => (nodeId, system.actorOf(Props(new FlareRouter(nodeId, radius, maxBeacons, false))))).toMap
     def createChannel(a: bitcoin_pubkey, b: bitcoin_pubkey): Unit = {
       routers(a) ! genChannelChangedState(routers(b), b, FlareRouterSpec.channelId(a, b))
       routers(b) ! genChannelChangedState(routers(a), a, FlareRouterSpec.channelId(a, b))

@@ -2,8 +2,9 @@ package fr.acinq.eclair.router
 
 import java.io.{File, FileWriter}
 
-import akka.actor.ActorSystem
+import akka.actor.{ActorSystem, Props}
 import akka.pattern.ask
+import akka.testkit.TestProbe
 import akka.util.Timeout
 import com.google.common.io.Files
 import fr.acinq.bitcoin.BinaryData
@@ -83,13 +84,13 @@ object Simulator extends App {
   writer.close()
 
 
-  val graph = new SimpleGraph[Int, DefaultEdge](classOf[DefaultEdge])
+  val fullGraph = new SimpleGraph[Int, DefaultEdge](classOf[DefaultEdge])
   links.foreach {
     case (source, targets) =>
-      graph.addVertex(source)
+      fullGraph.addVertex(source)
       targets.filter(_ > source).foreach(target => {
-        graph.addVertex(target)
-        graph.addEdge(source, target)
+        fullGraph.addVertex(target)
+        fullGraph.addEdge(source, target)
       })
   }
 
@@ -98,18 +99,25 @@ object Simulator extends App {
   val indexMap = (0 to maxId).map(i => nodeIds(i) -> i).toMap
 
   val system = ActorSystem("mySystem")
-  val routers = (0 to maxId).map(i => system.actorOf(FlareRouter.props(nodeIds(i), radius, maxBeacons), i.toString()))
+  val routers = (0 to maxId).map(i => system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString()))
 
   def createChannel(a: Int, b: Int): Unit = {
     routers(a) ! genChannelChangedState(routers(b), nodeIds(b), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
     routers(b) ! genChannelChangedState(routers(a), nodeIds(a), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
   }
 
-  StdIn.readLine("Press enter to connect nodes")
   links.foreach { case (source, targets) => targets.filter(_ > source).foreach(target => createChannel(source, target)) }
 
 
-  StdIn.readLine("Press enter to query nodes")
+  Thread.sleep(5000)
+  for (router <- routers) router ! 'tick_reset
+  Thread.sleep(5000)
+  for (router <- routers) router ! 'tick_beacons
+  Thread.sleep(10000)
+  for (router <- routers) router ! 'tick_reset
+  Thread.sleep(5000)
+  for (router <- routers) router ! 'tick_beacons
+
   implicit val timeout = Timeout(5 seconds)
 
   val futures = (0 to maxId).map(i => {
@@ -140,8 +148,8 @@ object Simulator extends App {
         case Success(response) => success = success + 1
         case Failure(t) =>
           println(s"cannot find route from $i to $j")
-          Option(new DijkstraShortestPath(graph, i, j, 100).getPath).foreach(path => {
-            println(path.getEdgeList.map(e => s"${graph.getEdgeSource(e)} -- ${graph.getEdgeTarget(e)}"))
+          Option(new DijkstraShortestPath(fullGraph, i, j, 100).getPath).foreach(path => {
+            println(path.getEdgeList.map(e => s"${fullGraph.getEdgeSource(e)} -- ${fullGraph.getEdgeTarget(e)}"))
           })
           failures = failures + 1
       }
@@ -149,4 +157,5 @@ object Simulator extends App {
       println(s"success: $success failures : $failures rate: ${(100 * success) / (success + failures)}%")
     }
   }
+  system.terminate()
 }

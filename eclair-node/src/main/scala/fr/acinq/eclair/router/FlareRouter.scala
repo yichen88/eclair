@@ -23,7 +23,9 @@ import scala.util.{Failure, Random, Success, Try}
 /**
   * Created by PM on 08/09/2016.
   */
-class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: Boolean = true) extends Actor with ActorLogging {
+class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: Boolean) extends Actor with ActorLogging {
+
+  def this(radius: Int, beaconCount: Int) = this(Globals.Node.publicKey, radius, beaconCount, true)
 
   val MAX_BEACON_DISTANCE = 100
 
@@ -219,10 +221,6 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
 
 
 object FlareRouter {
-
-  def props(radius: Int, beaconCount: Int) = Props(new FlareRouter(Globals.Node.publicKey, radius, beaconCount))
-
-  def props(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) = Props(new FlareRouter(myself, radius, beaconCount))
 
   // @formatter:off
   case class NamedEdge(val id: sha256_hash) extends DefaultEdge { override def toString: String = id.toString() }
