@@ -5,7 +5,7 @@ import akka.actor.{ActorRef, FSM, LoggingFSM, Props, Status}
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
 import fr.acinq.eclair.blockchain.peer.CurrentBlockCount
-import fr.acinq.eclair.channel.{CMD_ADD_HTLC, PaymentFailed, PaymentSent}
+import fr.acinq.eclair.channel.{CMD_ADD_HTLC, PaymentEvent, PaymentFailed, PaymentSent}
 import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
 import lightning.locktime.Locktime.Blocks
 import lightning.route_step.Next
@@ -68,8 +68,7 @@ class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
       val others = r.drop(2)
       val route = buildRoute(c.amountMsat, next +: others)
       val cmd = CMD_ADD_HTLC(route.steps(0).amount, c.h, locktime(Blocks(currentBlockCount.toInt + 100 + route.steps.size - 2)), route.copy(steps = route.steps.tail), commit = true)
-      context.system.eventStream.subscribe(self, classOf[PaymentSent])
-      context.system.eventStream.subscribe(self, classOf[PaymentFailed])
+      context.system.eventStream.subscribe(self, classOf[PaymentEvent])
       context.system.eventStream.unsubscribe(self, classOf[CurrentBlockCount])
       channel ! cmd
       goto(WAITING_FOR_PAYMENT_COMPLETE) using WaitingForComplete(s, cmd, channel)

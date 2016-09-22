@@ -39,7 +39,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
   override def receive: Receive = main(new SimpleGraph[bitcoin_pubkey, NamedEdge](classOf[NamedEdge]), Nil, Nil, Set())
 
   def main(graph: SimpleGraph[bitcoin_pubkey, NamedEdge], neighbors: List[Neighbor], updatesBatch: List[routing_table_update], beacons: Set[Beacon]): Receive = {
-    case ChannelChangedState(channel, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
+    case ChannelChangedState(channel, _, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
       val neighbor = Neighbor(theirNodeId, d.commitments.anchorId, context.actorSelection(channel.path.parent), Nil)
       val channelDesc = channel_desc(neighbor.channel_id, myself, neighbor.node_id)
       val updates = routing_table_update(channelDesc, OPEN) :: Nil
@@ -110,7 +110,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
         neighbor.actorSelection ! neighbor_reset(channel_ids)
       }
     case 'tick_beacons =>
-      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(1)) {
+      for (node <- Random.shuffle(graph.vertexSet().toSet - myself)) {
         log.debug(s"sending beacon_req message to random node $node")
         val (channels1, route) = findRoute(graph, myself, node)
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))

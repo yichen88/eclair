@@ -636,7 +636,7 @@ class Channel(val them: ActorRef, val blockchain: ActorRef, paymentHandler: Acto
   }
 
   onTransition {
-    case previousState -> currentState => context.system.eventStream.publish(ChannelChangedState(self, theirNodeId, previousState, currentState, stateData))
+    case previousState -> currentState => context.system.eventStream.publish(ChannelChangedState(self, context.parent, theirNodeId, previousState, currentState, stateData))
   }
 
   /*
