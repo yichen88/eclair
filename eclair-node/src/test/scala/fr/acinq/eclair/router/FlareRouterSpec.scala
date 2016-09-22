@@ -2,13 +2,13 @@ package fr.acinq.eclair.router
 
 import java.math.BigInteger
 
-import akka.actor.ActorSystem
+import akka.actor.{ActorRef, ActorSystem}
 import akka.pattern.ask
 import akka.testkit.TestKit
 import akka.util.Timeout
 import fr.acinq.bitcoin.{BinaryData, Crypto}
 import fr.acinq.eclair._
-import fr.acinq.eclair.channel.Scripts
+import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.FlareRouter._
 import lightning._
 import lightning.neighbor_onion.Next.{Forward, Req}
@@ -112,8 +112,8 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     val routers = nodeIds map (nodeId => system.actorOf(FlareRouter.props(nodeId, radius, maxBeacons), nodeId.toString().take(6)))
 
     def createChannel(a: Int, b: Int): Unit = {
-      routers(a) ! ChannelOpened(channel_desc(channelId(nodeIds(a), nodeIds(b)), nodeIds(a), nodeIds(b)), system.actorSelection(routers(b).path))
-      routers(b) ! ChannelOpened(channel_desc(channelId(nodeIds(a), nodeIds(b)), nodeIds(b), nodeIds(a)), system.actorSelection(routers(a).path))
+      routers(a) ! genChannelChangedState(routers(b), nodeIds(b), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
+      routers(b) ! genChannelChangedState(routers(a), nodeIds(a), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
     }
 
     links.foreach { case (a, b) => createChannel(a, b) }
@@ -149,4 +149,9 @@ object FlareRouterSpec {
     random.nextBytes(b)
     c ++ a ++ b
   }
+
+  def genChannelChangedState(them: ActorRef, theirNodeId: BinaryData, channelId: BinaryData): ChannelChangedState =
+    ChannelChangedState(null, them, theirNodeId, null, NORMAL, DATA_NORMAL(new Commitments(null, null, null, null, null, null, 0L, null, null, null, null) {
+      override def anchorId: BinaryData = channelId // that's the only thing we need
+    }, null, null))
 }

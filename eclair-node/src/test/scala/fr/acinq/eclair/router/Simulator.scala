@@ -8,17 +8,18 @@ import akka.util.Timeout
 import com.google.common.io.Files
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
-import fr.acinq.eclair.router.FlareRouter.{Beacon, ChannelOpened, RouteRequest, RouteResponse}
+import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
+import fr.acinq.eclair.router.FlareRouterSpec._
 import lightning.{channel_desc, routing_table}
 import org.jgraph.graph.DefaultEdge
 import org.jgrapht.alg.DijkstraShortestPath
 import org.jgrapht.graph.SimpleGraph
 
+import scala.collection.JavaConversions._
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.io.{Source, StdIn}
-import scala.collection.JavaConversions._
-import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.{Failure, Success}
 
 /**
@@ -81,8 +82,8 @@ object Simulator extends App {
   val routers = (0 to maxId).map(i => system.actorOf(FlareRouter.props(nodeIds(i), radius, maxBeacons), i.toString()))
 
   def createChannel(a: Int, b: Int): Unit = {
-    routers(a) ! ChannelOpened(channel_desc(FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)), nodeIds(a), nodeIds(b)), system.actorSelection(routers(b).path))
-    routers(b) ! ChannelOpened(channel_desc(FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)), nodeIds(b), nodeIds(a)), system.actorSelection(routers(a).path))
+    routers(a) ! genChannelChangedState(routers(b), nodeIds(b), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
+    routers(b) ! genChannelChangedState(routers(a), nodeIds(a), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
   }
 
   StdIn.readLine("Press enter to connect nodes")
