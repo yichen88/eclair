@@ -3,7 +3,7 @@ package fr.acinq.eclair.router
 import java.io.{ByteArrayOutputStream, OutputStreamWriter}
 import java.util
 
-import akka.actor.{Actor, ActorLogging, ActorRef, ActorSelection, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import akka.pattern._
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
@@ -23,7 +23,7 @@ import scala.util.{Failure, Random, Success, Try}
 /**
   * Created by PM on 08/09/2016.
   */
-class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends Actor with ActorLogging {
+class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: Boolean = true) extends Actor with ActorLogging {
 
   val MAX_BEACON_DISTANCE = 100
 
@@ -31,8 +31,10 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int) extends
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_beacons)
-  context.system.scheduler.schedule(1 minute, 1 minute, self, 'tick_reset)
+  if (ticks) {
+    context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_beacons)
+    context.system.scheduler.schedule(1 minute, 1 minute, self, 'tick_reset)
+  }
 
   import FlareRouter._
 
