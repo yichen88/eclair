@@ -82,34 +82,34 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     assert(g1 == g2)
   }
 
-  //  test("include updates") {
-  //    val nodeIds = (0 to 3).map(nodeId)
-  //    val myself = nodeIds(0)
-  //    val graph = new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge])
-  //    /*
-  //            0
-  //           / \
-  //          1   2
-  //     */
-  //    graph.addVertex(nodeIds(0))
-  //    graph.addVertex(nodeIds(1))
-  //    graph.addVertex(nodeIds(2))
-  //    graph.addEdge(nodeIds(0), nodeIds(1), NamedEdge(channelId(nodeIds(0), nodeIds(1))))
-  //    graph.addEdge(nodeIds(0), nodeIds(2), NamedEdge(channelId(nodeIds(0), nodeIds(2))))
-  //    val updates = Seq(
-  //      routing_table_update(channel_desc(channelId(nodeIds(3), nodeIds(1)), nodeIds(3), nodeIds(1)), OPEN),
-  //      routing_table_update(channel_desc(channelId(nodeIds(1), nodeIds(0)), nodeIds(1), nodeIds(0)), OPEN)
-  //    )
-  //    val (graph1, _) = include(myself, graph, updates, 2, Set())
-  //    assert(graph1.vertexSet().contains(nodeIds(3)))
-  //  }
+  test("include updates") {
+    val nodeIds = (0 to 3).map(nodeId).map(bin2pubkey)
+    val myself = nodeIds(0)
+    val graph = new SimpleGraph[bitcoin_pubkey, NamedEdge](classOf[NamedEdge])
+    /*
+            0
+           / \
+          1   2
+     */
+    graph.addVertex(nodeIds(0))
+    graph.addVertex(nodeIds(1))
+    graph.addVertex(nodeIds(2))
+    graph.addEdge(nodeIds(0), nodeIds(1), NamedEdge(channelId(nodeIds(0), nodeIds(1))))
+    graph.addEdge(nodeIds(0), nodeIds(2), NamedEdge(channelId(nodeIds(0), nodeIds(2))))
+    val updates = Seq(
+      routing_table_update(channel_desc(channelId(nodeIds(3), nodeIds(1)), nodeIds(3), nodeIds(1)), OPEN),
+      routing_table_update(channel_desc(channelId(nodeIds(1), nodeIds(0)), nodeIds(1), nodeIds(0)), OPEN)
+    )
+    val (graph1, _) = include(myself, graph, updates, 2, Set())
+    assert(graph1.vertexSet().contains(nodeIds(3)))
+  }
 
   test("basic routing and discovery") {
     val radius = 2
     val maxBeacons = 5
     val nodeIds = for (i <- 0 to 6) yield nodeId(i)
     val links = (0, 1) :: (0, 2) :: (1, 3) :: (1, 6) :: (2, 4) :: (4, 5) :: Nil
-    val routers = nodeIds map (nodeId => system.actorOf(FlareRouter.props(nodeId, radius, maxBeacons), nodeId.toString().take(2)))
+    val routers = nodeIds map (nodeId => system.actorOf(FlareRouter.props(nodeId, radius, maxBeacons), nodeId.toString().take(6)))
 
     def createChannel(a: Int, b: Int): Unit = {
       routers(a) ! ChannelOpened(channel_desc(channelId(nodeIds(a), nodeIds(b)), nodeIds(a), nodeIds(b)), system.actorSelection(routers(b).path))
