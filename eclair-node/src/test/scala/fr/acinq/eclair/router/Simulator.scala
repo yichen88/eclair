@@ -111,14 +111,15 @@ object Simulator extends App {
 
   Thread.sleep(5000)
   for (router <- routers) router ! 'tick_reset
-  Thread.sleep(5000)
+  Thread.sleep(10000)
   for (router <- routers) router ! 'tick_beacons
   Thread.sleep(10000)
   for (router <- routers) router ! 'tick_reset
-  Thread.sleep(5000)
+  Thread.sleep(10000)
   for (router <- routers) router ! 'tick_beacons
+  Thread.sleep(10000)
 
-  implicit val timeout = Timeout(5 seconds)
+  implicit val timeout = Timeout(5 second)
 
   val futures = (0 to maxId).map(i => {
     val future = for {
