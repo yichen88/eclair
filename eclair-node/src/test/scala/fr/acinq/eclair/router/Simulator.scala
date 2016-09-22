@@ -109,15 +109,27 @@ object Simulator extends App {
   links.foreach { case (source, targets) => targets.filter(_ > source).foreach(target => createChannel(source, target)) }
 
 
-  Thread.sleep(5000)
-  for (router <- routers) router ! 'tick_reset
-  Thread.sleep(10000)
-  for (router <- routers) router ! 'tick_beacons
-  Thread.sleep(10000)
-  for (router <- routers) router ! 'tick_reset
-  Thread.sleep(10000)
-  for (router <- routers) router ! 'tick_beacons
-  Thread.sleep(10000)
+  def callToAction: Boolean = {
+    println("'r' => send tick_reset to all actors")
+    println("'b' => send tick_beacons to all actors")
+    println("'c' => continue")
+    StdIn.readLine("?") match {
+      case "r" =>
+        for (router <- routers) router ! 'tick_reset
+        true
+      case "b" =>
+        for (router <- routers) router ! 'tick_beacons
+        true
+      case "c" => false
+      case x =>
+        println(s"'$x' not supported")
+        callToAction
+    }
+  }
+
+  do {
+    Thread.sleep(30000)
+  } while (callToAction)
 
   implicit val timeout = Timeout(5 second)
 
