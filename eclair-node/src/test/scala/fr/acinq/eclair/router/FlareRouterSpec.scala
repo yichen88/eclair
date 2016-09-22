@@ -143,10 +143,6 @@ object FlareRouterSpec {
 
   def nodeId(i: Int): BinaryData = {
     val a = BigInteger.valueOf(i).toByteArray
-    require(a.length <= 3)
-    val c = Array.fill[Byte](3 - a.length)(0.toByte)
-    val b = new Array[Byte](32 - 3)
-    random.nextBytes(b)
-    c ++ a ++ b
+    Crypto.sha256(a)
   }
 }

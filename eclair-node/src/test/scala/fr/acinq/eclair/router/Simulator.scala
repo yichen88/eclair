@@ -25,19 +25,26 @@ import scala.util.{Failure, Success}
   * Created by fabrice on 19/09/16.
   */
 object Simulator extends App {
+  var n = 0
+  var k = 4
   var radius = 2
   var maxBeacons = 5
+  var p = 0.2
   var filename = ""
+  var gen = false
 
   def parse(arguments: List[String]): Unit = arguments match {
+    case "-n" :: value :: tail => n = value.toInt; parse(tail)
+    case "-k" :: value :: tail => k = value.toInt; parse(tail)
+    case "-p" :: value :: tail => p = value.toDouble; parse(tail)
     case "-r" :: value :: tail => radius = value.toInt; parse(tail)
     case "-nb" :: value :: tail => maxBeacons = value.toInt; parse(tail)
+    case "-gen" :: tail => gen = true; parse(tail)
     case value :: tail => filename = value; parse(tail)
     case Nil => ()
   }
 
   parse(args.toList)
-  println(s"running simulation of $filename with radius=$radius and number of beacons=$maxBeacons")
 
   case class Link(a: Int, b: Int)
 
@@ -49,31 +56,45 @@ object Simulator extends App {
     * @param filename file name
     * @return a list of links
     */
-  def readLinks(filename: String): Seq[Link] = {
-    Source.fromFile(filename).getLines().toList.filterNot(_.startsWith("#")).flatMap(line => {
+  def readLinks(filename: String): Map[Int, Set[Int]] = {
+    Source.fromFile(filename).getLines().toList.filterNot(_.startsWith("#")).map(line => {
       val a = line.split(" ").map(_.toInt)
-      a.tail.map(i => Link(a.head, i))
-    })
+      a.head -> a.tail.toSet
+    }).toMap
   }
 
-  val links = readLinks(filename).collect {
-    case Link(a, b) if a < b => Link(a, b)
+  val links = (gen, filename) match {
+    case (true, "") =>
+      println(s"running simulation with a generated graph(n = $n, k=$k, p=$p) with radius=$radius and number of beacons=$maxBeacons")
+      GenGraph.convert(GenGraph.genGraph(n, k, p))
+    case (true, _) => throw new IllegalArgumentException("you cannot specify a file name if you use the -gen option")
+    case (false, "") => throw new IllegalArgumentException("you must specify a file name or use the -gen option")
+    case (false, _) =>
+      println(s"running simulation of $filename with radius=$radius and number of beacons=$maxBeacons")
+      readLinks(filename)
   }
-  val writer = new FileWriter(new File(s"simulator.gv"))
+
+  // to display the graph use the circo layout: xdot -f circo simulator.dot
+  val writer = new FileWriter(new File(s"simulator.dot"))
   writer.append("graph G {\n")
-  links.foreach(l => writer.append(s""""${l.a}" -- "${l.b}"\n"""))
+  links.foreach {
+    case (source, targets) => targets.filter(_ > source).foreach(target => writer.append(s""""$source" -- "$target"\n"""))
+  }
   writer.append("}\n")
   writer.close()
 
 
   val graph = new SimpleGraph[Int, DefaultEdge](classOf[DefaultEdge])
-  links.foreach(l => {
-    graph.addVertex(l.a)
-    graph.addVertex(l.b)
-    graph.addEdge(l.a, l.b)
-  })
+  links.foreach {
+    case (source, targets) =>
+      graph.addVertex(source)
+      targets.filter(_ > source).foreach(target => {
+        graph.addVertex(target)
+        graph.addEdge(source, target)
+      })
+  }
 
-  val maxId = links.map(l => Seq(l.a, l.b)).flatten.max
+  val maxId = links.keySet.max
   val nodeIds = (0 to maxId).map(FlareRouterSpec.nodeId)
   val indexMap = (0 to maxId).map(i => nodeIds(i) -> i).toMap
 
@@ -86,31 +107,12 @@ object Simulator extends App {
   }
 
   StdIn.readLine("Press enter to connect nodes")
-  links.foreach { case Link(a, b) => createChannel(a, b) }
+  links.foreach { case (source, targets) => targets.filter(_ > source).foreach(target => createChannel(source, target)) }
 
 
   StdIn.readLine("Press enter to query nodes")
   implicit val timeout = Timeout(5 seconds)
 
-  //  (0 to maxId).foreach(i => {
-  //    val future = for {
-  //      channels <- (routers(i) ? 'network).mapTo[Seq[channel_desc]]
-  //      beacons <- (routers(i) ? 'beacons).mapTo[Set[Beacon]]
-  //    } yield {
-  //      val writer = new FileWriter(new File(s"$i.gv"))
-  //      writer.append("graph G {\n")
-  //      writer.append(s""""$i" [color = red]\n""")
-  //      beacons.map(b => writer.append(s""""${indexMap(b.id)}" [color = blue]\n"""))
-  //      channels.map(c => writer.append(s""""${indexMap(pubkey2bin(c.nodeA))}" -- "${indexMap(BinaryData(pubkey2bin(c.nodeB)))}"\n"""))
-  //      writer.append("}\n")
-  //      writer.close()
-  //    }
-  //    future.onFailure {
-  //      case t: Throwable =>
-  //        println(s"cannot write routing table for $i: $t")
-  //    }
-  //    Await.ready(future, 1 second)
-  //  })
   val futures = (0 to maxId).map(i => {
     val future = for {
       dot <- (routers(i) ? 'dot).mapTo[BinaryData]
