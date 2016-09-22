@@ -47,8 +47,6 @@ object Simulator extends App {
 
   parse(args.toList)
 
-  case class Link(a: Int, b: Int)
-
   /**
     * read links from a text file. The format of the file is:
     * - node ids are integer from 0 to N -1 where N is the number of nodes
@@ -76,7 +74,7 @@ object Simulator extends App {
   }
 
   // to display the graph use the circo layout: xdot -f circo simulator.dot
-  val writer = new FileWriter(new File(s"simulator.dot"))
+  val writer = new FileWriter(new File("simulator.dot"))
   writer.append("graph G {\n")
   links.foreach {
     case (source, targets) => targets.filter(_ > source).foreach(target => writer.append(s""""$source" -- "$target"\n"""))
