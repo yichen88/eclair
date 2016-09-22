@@ -1,15 +1,16 @@
-package fr.acinq.eclair.router
+package fr.acinq.protos.flare
 
-import java.io.{File, FileWriter}
+import java.io.{BufferedOutputStream, File, FileOutputStream, FileWriter}
+import java.math.BigInteger
 
-import akka.actor.{ActorSystem, Props}
+import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.pattern.ask
 import akka.util.Timeout
-import com.google.common.io.Files
-import fr.acinq.bitcoin.BinaryData
+import fr.acinq.bitcoin.{BinaryData, Crypto}
 import fr.acinq.eclair._
+import fr.acinq.eclair.channel._
+import fr.acinq.eclair.router.FlareRouter
 import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
-import fr.acinq.eclair.router.FlareRouterSpec._
 import lightning.{channel_desc, routing_table}
 import org.jgraph.graph.DefaultEdge
 import org.jgrapht.alg.DijkstraShortestPath
@@ -20,7 +21,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.io.{Source, StdIn}
-import scala.util.{Failure, Random, Success}
+import scala.util.Random
 
 /**
   * Created by fabrice on 19/09/16.
@@ -113,15 +114,15 @@ object Simulator extends App {
   }
 
   val maxId = links.keySet.max
-  val nodeIds = (0 to maxId).map(FlareRouterSpec.nodeId)
+  val nodeIds = (0 to maxId).map(nodeId)
   val indexMap = (0 to maxId).map(i => nodeIds(i) -> i).toMap
 
   val system = ActorSystem("mySystem")
   val routers = (0 to maxId).map(i => system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString()))
 
   def createChannel(a: Int, b: Int): Unit = {
-    routers(a) ! genChannelChangedState(routers(b), nodeIds(b), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
-    routers(b) ! genChannelChangedState(routers(a), nodeIds(a), FlareRouterSpec.channelId(nodeIds(a), nodeIds(b)))
+    routers(a) ! genChannelChangedState(routers(b), nodeIds(b), channelId(nodeIds(a), nodeIds(b)))
+    routers(b) ! genChannelChangedState(routers(a), nodeIds(a), channelId(nodeIds(a), nodeIds(b)))
   }
 
   links.foreach { case (source, targets) => targets.filter(_ > source).foreach(target => createChannel(source, target)) }
@@ -154,7 +155,7 @@ object Simulator extends App {
     val futures = (0 to maxId).map(i => {
       val future = for {
         dot <- (routers(i) ? 'dot).mapTo[BinaryData]
-      } yield Files.write(dot, new File(s"$i.dot"))
+      } yield printToFile(new File(s"$i.dot"))(writer => writer.write(dot))
 
       future.onFailure {
         case t: Throwable =>
@@ -169,21 +170,19 @@ object Simulator extends App {
   var failures = 0
   for (i <- 0 to maxId) {
     for (j <- Random.shuffle(i + 1 to maxId)) {
-      val future = for {
+      val future = (for {
         channels <- (routers(j) ? 'network).mapTo[Seq[channel_desc]]
         request = RouteRequest(nodeIds(j), routing_table(channels))
         response <- (routers(i) ? request).mapTo[RouteResponse]
-      } yield response
-
-      future.onComplete {
-        case Success(response) => success = success + 1
-        case Failure(t) =>
-          println(s"cannot find route from $i to $j")
-          Option(new DijkstraShortestPath(fullGraph, i, j, 100).getPath).foreach(path => {
-            println(path.getEdgeList.map(e => s"${fullGraph.getEdgeSource(e)} -- ${fullGraph.getEdgeTarget(e)}"))
-          })
-          failures = failures + 1
-      }
+      } yield success = success + 1)
+        .recover {
+          case t: Throwable =>
+            println(s"cannot find route from $i to $j")
+            Option(new DijkstraShortestPath(fullGraph, i, j, 100).getPath).foreach(path => {
+              println(path.getEdgeList.map(e => s"${fullGraph.getEdgeSource(e)} -- ${fullGraph.getEdgeTarget(e)}"))
+            })
+            failures = failures + 1
+        }
       Await.ready(future, 5 seconds)
       val successRate = (100 * success) / (success + failures)
       val progress = 100 * i.toDouble / (maxId - 1)
@@ -191,4 +190,23 @@ object Simulator extends App {
     }
   }
   system.terminate()
+
+  def channelId(a: BinaryData, b: BinaryData): BinaryData = {
+    if (Scripts.isLess(a, b)) Crypto.sha256(a ++ b) else Crypto.sha256(b ++ a)
+  }
+
+  def nodeId(i: Int): BinaryData = {
+    val a = BigInteger.valueOf(i).toByteArray
+    Crypto.sha256(a)
+  }
+
+  def genChannelChangedState(them: ActorRef, theirNodeId: BinaryData, channelId: BinaryData): ChannelChangedState =
+    ChannelChangedState(null, them, theirNodeId, null, NORMAL, DATA_NORMAL(new Commitments(null, null, null, null, null, null, 0L, null, null, null, null) {
+      override def anchorId: BinaryData = channelId // that's the only thing we need
+    }, null, null))
+
+  def printToFile(f: java.io.File)(op: java.io.OutputStream => Unit) {
+    val p = new BufferedOutputStream(new FileOutputStream(f))
+    try { op(p) } finally { p.close() }
+  }
 }

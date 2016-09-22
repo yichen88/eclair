@@ -1,4 +1,4 @@
-package fr.acinq.eclair
+package fr.acinq.protos.flare
 
 import org.graphstream.algorithm.generator.WattsStrogatzGenerator
 import org.graphstream.graph.{Edge, Node}

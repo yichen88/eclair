@@ -5,7 +5,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 /**
   * Created by PM on 08/09/2016.
   */
-class Node extends Actor with ActorLogging {
+class FlareNode extends Actor with ActorLogging {
 
   val neighborHandler = context.actorOf(Props(new NeighborHandler(2, 1)), "neighbor-handler")
 

@@ -13,11 +13,11 @@ object FlareTest extends App {
   val system = ActorSystem()
 
 
-  val a = system.actorOf(Props[Node], name = "a")
-  val b = system.actorOf(Props[Node], name = "b")
-  val c = system.actorOf(Props[Node], name = "c")
-  val d = system.actorOf(Props[Node], name = "d")
-  val e = system.actorOf(Props[Node], name = "e")
+  val a = system.actorOf(Props[FlareNode], name = "a")
+  val b = system.actorOf(Props[FlareNode], name = "b")
+  val c = system.actorOf(Props[FlareNode], name = "c")
+  val d = system.actorOf(Props[FlareNode], name = "d")
+  val e = system.actorOf(Props[FlareNode], name = "e")
 
   a ! ('connect, b)
   a ! ('connect, c)
