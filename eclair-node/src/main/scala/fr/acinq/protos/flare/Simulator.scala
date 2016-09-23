@@ -67,7 +67,7 @@ object Simulator extends App {
     }).toMap
   }
 
-  println(s"flare parameters: radius=$radius beacons=$maxBeacons beacon-reactivaterount=$beaconReactivateCount")
+  println(s"flare parameters: radius=$radius beacons=$maxBeacons beacon-reactivate-count=$beaconReactivateCount")
   val links = (gen, filename) match {
     case (true, "") =>
       println(s"running simulation with a generated graph(n = $n, k=$k, p=$p)")
