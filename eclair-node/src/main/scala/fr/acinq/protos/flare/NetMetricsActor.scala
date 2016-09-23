@@ -18,7 +18,7 @@ class NetMetricsActor(actor: ActorRef) extends Actor with ActorLogging {
 
   def main(in: Int): Receive = {
     case msg: GeneratedMessage =>
-      self forward msg
+      actor forward msg
       val size = msg.toByteArray.size
       context become main(in + size)
     case 'tick =>
