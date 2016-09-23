@@ -10,13 +10,15 @@ import fr.acinq.bitcoin.{BinaryData, Crypto}
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.FlareRouter
-import fr.acinq.eclair.router.FlareRouter.{RouteRequest, RouteResponse}
+import fr.acinq.eclair.router.FlareRouter.{FlareInfo, RouteRequest, RouteResponse}
 import lightning.{channel_desc, routing_table}
+import org.apache.commons.math3.stat.descriptive.SummaryStatistics
 import org.jgraph.graph.DefaultEdge
 import org.jgrapht.alg.DijkstraShortestPath
 import org.jgrapht.graph.SimpleGraph
 
 import scala.collection.JavaConversions._
+import scala.collection.immutable.IndexedSeq
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
@@ -138,6 +140,7 @@ object Simulator extends App {
   def callToAction: Boolean = {
     println("'r' => send tick_reset to all actors")
     println("'b' => send tick_beacons to all actors")
+    println("'i' => get flare_info from all actors")
     println("'c' => continue")
     StdIn.readLine("?") match {
       case "r" =>
@@ -145,6 +148,22 @@ object Simulator extends App {
         true
       case "b" =>
         for (router <- routers) router ! 'tick_beacons
+        true
+      case "i" =>
+        implicit val timeout = Timeout(1 minute)
+        val futures = routers.map(router => (router ? 'info).mapTo[FlareInfo])
+        val results = Await.result(Future.sequence(futures), 30 second)
+        val neighborsStats = new SummaryStatistics()
+        val knownStats = new SummaryStatistics()
+        val beaconsHopsStats = new SummaryStatistics()
+        results.foreach(result => {
+          neighborsStats.addValue(result.neighbors)
+          knownStats.addValue(result.known_nodes)
+          result.beacons.foreach(beacon => beaconsHopsStats.addValue(beacon.hops))
+        })
+        println(f"neighborMin=${neighborsStats.getMin}%.2f neighborMax=${neighborsStats.getMax}%.2f neighborAvg=${neighborsStats.getMean}%.2f  neighborVar=${neighborsStats.getVariance}%.2f")
+        println(f"knownMin=${knownStats.getMin}%.2f knownMax=${knownStats.getMax}%.2f knownAvg=${knownStats.getMean}%.2f knownVar=${knownStats.getVariance}%.2f")
+        println(f"beaconHopsMin=${beaconsHopsStats.getMin}%.2f beaconHopsMax=${beaconsHopsStats.getMax}%.2f beaconHopsAvg=${beaconsHopsStats.getMean}%.2f  beaconHopsVar=${beaconsHopsStats.getVariance}%.2f")
         true
       case "c" => false
       case x =>
@@ -176,13 +195,17 @@ object Simulator extends App {
 
   var success = 0
   var failures = 0
+  val routeStats = new SummaryStatistics()
   for (i <- 0 to maxId) {
     for (j <- Random.shuffle(i + 1 to maxId)) {
       val future = (for {
         channels <- (routers(j) ? 'network).mapTo[Seq[channel_desc]]
         request = RouteRequest(nodeIds(j), routing_table(channels))
         response <- (routers(i) ? request).mapTo[RouteResponse]
-      } yield success = success + 1)
+      } yield {
+        success = success + 1
+        routeStats.addValue(response.route.size)
+      })
         .recover {
           case t: Throwable =>
             println(s"cannot find route from $i to $j")
@@ -192,9 +215,11 @@ object Simulator extends App {
             failures = failures + 1
         }
       Await.ready(future, 5 seconds)
-      val successRate = (100 * success) / (success + failures)
-      val progress = 100 * i.toDouble / (maxId - 1)
-      println(f"${success+failures} routes tested  success=$successRate%3.2f%% progress=$progress%3.2f%%")
+      if (success + failures % 10 == 0) {
+        val successRate = (100 * success) / (success + failures)
+        val progress = 100 * i.toDouble / (maxId - 1)
+        println(f"tested=${success + failures} success=$successRate%.2f%% avgLen=${routeStats.getMean}%.2f maxLen=${routeStats.getMean}%.2f varLen=${routeStats.getVariance}%.2f progress=$progress%.2f%%")
+      }
     }
   }
   system.terminate()
