@@ -24,6 +24,9 @@ class NetMetricsActor(actor: ActorRef) extends Actor with ActorLogging {
     case 'tick =>
       log.info(s"$in bytes since last tick")
       context become main(0)
+    case other =>
+      // no-protobuf messages are internal and bypass the size count
+      actor forward other
 
   }
 }
