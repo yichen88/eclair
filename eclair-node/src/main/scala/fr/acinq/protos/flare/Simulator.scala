@@ -118,7 +118,12 @@ object Simulator extends App {
   val indexMap = (0 to maxId).map(i => nodeIds(i) -> i).toMap
 
   val system = ActorSystem("mySystem")
-  val routers = (0 to maxId).map(i => system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString()))
+  val routers = (0 to maxId).map(_ match {
+    case i if i == 0 =>
+      val actor = system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString())
+      system.actorOf(Props(new NetMetricsActor(actor)), "net-metrics")
+    case i => system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString())
+  })
 
   def createChannel(a: Int, b: Int): Unit = {
     routers(a) ! genChannelChangedState(routers(b), nodeIds(b), channelId(nodeIds(a), nodeIds(b)))
@@ -168,7 +173,7 @@ object Simulator extends App {
 
   var success = 0
   var failures = 0
-  for (i <- 0 to maxId) {
+  for (i <- Random.shuffle(0 to maxId)) {
     for (j <- Random.shuffle(i + 1 to maxId)) {
       val future = (for {
         channels <- (routers(j) ? 'network).mapTo[Seq[channel_desc]]
