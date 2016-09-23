@@ -31,6 +31,7 @@ object Simulator extends App {
   var k = 4
   var radius = 2
   var maxBeacons = 5
+  var beaconReactivateCount = 5
   var p = 0.2
   var filename = ""
   var gen = false
@@ -42,6 +43,7 @@ object Simulator extends App {
     case "-p" :: value :: tail => p = value.toDouble; parse(tail)
     case "-r" :: value :: tail => radius = value.toInt; parse(tail)
     case "-nb" :: value :: tail => maxBeacons = value.toInt; parse(tail)
+    case "-nbr" :: value :: tail => beaconReactivateCount = value.toInt; parse(tail)
     case "-gen" :: tail => gen = true; parse(tail)
     case "-save" :: tail => save = true; parse(tail)
     case value :: tail => filename = value; parse(tail)
@@ -65,14 +67,15 @@ object Simulator extends App {
     }).toMap
   }
 
+  println(s"flare parameters: radius=$radius beacons=$maxBeacons beacon-reactivaterount=$beaconReactivateCount")
   val links = (gen, filename) match {
     case (true, "") =>
-      println(s"running simulation with a generated graph(n = $n, k=$k, p=$p) with radius=$radius and number of beacons=$maxBeacons")
+      println(s"running simulation with a generated graph(n = $n, k=$k, p=$p)")
       GenGraph.convert(GenGraph.genGraph(n, k, p))
     case (true, _) => throw new IllegalArgumentException("you cannot specify a file name if you use the -gen option")
     case (false, "") => throw new IllegalArgumentException("you must specify a file name or use the -gen option")
     case (false, _) =>
-      println(s"running simulation of $filename with radius=$radius and number of beacons=$maxBeacons")
+      println(s"running simulation of $filename")
       readLinks(filename)
   }
 
@@ -173,7 +176,7 @@ object Simulator extends App {
 
   var success = 0
   var failures = 0
-  for (i <- Random.shuffle(0 to maxId)) {
+  for (i <- 0 to maxId) {
     for (j <- Random.shuffle(i + 1 to maxId)) {
       val future = (for {
         channels <- (routers(j) ? 'network).mapTo[Seq[channel_desc]]
@@ -191,7 +194,7 @@ object Simulator extends App {
       Await.ready(future, 5 seconds)
       val successRate = (100 * success) / (success + failures)
       val progress = 100 * i.toDouble / (maxId - 1)
-      println(f"success: $success failures : $failures rate: $successRate%3.2f%% progress=$progress%3.2f%%")
+      println(f"${success+failures} routes tested  success=$successRate%3.2f%% progress=$progress%3.2f%%")
     }
   }
   system.terminate()

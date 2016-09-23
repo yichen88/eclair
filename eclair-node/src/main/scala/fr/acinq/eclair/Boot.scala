@@ -90,8 +90,9 @@ class Setup extends Logging {
   }
   val radius = config.getInt("eclair.flare.radius")
   val beaconCount = config.getInt("eclair.flare.beacon-count")
-  logger.info(s"flare params radius=$radius beaconCount=$beaconCount")
-  val router = system.actorOf(Props(new FlareRouter(radius, beaconCount)), name = "router")
+  val beaconReactivateCount = config.getInt("eclair.flare.beacon-reactivate-count")
+  logger.info(s"flare params radius=$radius beaconCount=$beaconCount beaconReactivateCount=$beaconReactivateCount")
+  val router = system.actorOf(Props(new FlareRouter(Globals.Node.publicKey, radius, beaconCount, beaconReactivateCount = beaconReactivateCount)), name = "router")
   val register = system.actorOf(Register.props(watcher, paymentHandler, router), name = "register")
   val selector = system.actorOf(Props[ChannelSelector], name = "selector")
   val paymentSpawner = system.actorOf(PaymentSpawner.props(router, selector, 1000), "payment-spawner")

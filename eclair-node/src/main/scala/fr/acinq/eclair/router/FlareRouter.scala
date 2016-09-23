@@ -23,9 +23,7 @@ import scala.util.{Failure, Random, Success, Try}
 /**
   * Created by PM on 08/09/2016.
   */
-class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: Boolean) extends Actor with ActorLogging {
-
-  def this(radius: Int, beaconCount: Int) = this(Globals.Node.publicKey, radius, beaconCount, true)
+class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: Boolean = true, beaconReactivateCount: Int = 5) extends Actor with ActorLogging {
 
   val MAX_BEACON_DISTANCE = 100
 
@@ -100,7 +98,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         neighbor.connection ! neighbor_reset(channel_ids)
       }
     case 'tick_beacons =>
-      for (node <- Random.shuffle(graph.vertexSet().toSet - myself)) {
+      for (node <- Random.shuffle(graph.vertexSet().toSet - myself).take(beaconReactivateCount)) {
         log.debug(s"sending beacon_req message to random node $node")
         val (channels1, route) = findRoute(graph, myself, node)
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
