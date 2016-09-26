@@ -18,7 +18,6 @@ import org.jgrapht.alg.DijkstraShortestPath
 import org.jgrapht.graph.SimpleGraph
 
 import scala.collection.JavaConversions._
-import scala.collection.immutable.IndexedSeq
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
@@ -215,7 +214,7 @@ object Simulator extends App {
             failures = failures + 1
         }
       Await.ready(future, 5 seconds)
-      if (success + failures % 10 == 0) {
+      if ((success + failures) % 10 == 0) {
         val successRate = (100 * success) / (success + failures)
         val progress = 100 * i.toDouble / (maxId - 1)
         println(f"tested=${success + failures} success=$successRate%.2f%% avgLen=${routeStats.getMean}%.2f maxLen=${routeStats.getMean}%.2f varLen=${routeStats.getVariance}%.2f progress=$progress%.2f%%")
