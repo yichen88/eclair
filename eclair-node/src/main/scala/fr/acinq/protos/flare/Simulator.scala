@@ -13,11 +13,9 @@ import fr.acinq.eclair.router.FlareRouter
 import fr.acinq.eclair.router.FlareRouter.{FlareInfo, RouteRequest, RouteResponse}
 import lightning.{channel_desc, routing_table}
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics
-import org.jgraph.graph.DefaultEdge
-import org.jgrapht.alg.DijkstraShortestPath
-import org.jgrapht.graph.SimpleGraph
+import org.graphstream.graph.Node
+import org.graphstream.graph.implementations.SingleGraph
 
-import scala.collection.JavaConversions._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
@@ -107,13 +105,14 @@ object Simulator extends App {
     saveAsText(links, "simulator.txt")
   }
 
-  val fullGraph = new SimpleGraph[Int, DefaultEdge](classOf[DefaultEdge])
+  val fullGraph = new SingleGraph("simulator")
+  def getOrAddNode(i: Int): Node = Option(fullGraph.getNode[Node](i.toString)).getOrElse(fullGraph.addNode[Node](i.toString))
   links.foreach {
     case (source, targets) =>
-      fullGraph.addVertex(source)
+      val srcNode = getOrAddNode(source)
       targets.filter(_ > source).foreach(target => {
-        fullGraph.addVertex(target)
-        fullGraph.addEdge(source, target)
+        val tgtNode = getOrAddNode(target)
+        fullGraph.addEdge(s"$source-$target", srcNode, tgtNode)
       })
   }
 
@@ -208,9 +207,9 @@ object Simulator extends App {
         .recover {
           case t: Throwable =>
             println(s"cannot find route from $i to $j")
-            Option(new DijkstraShortestPath(fullGraph, i, j, 100).getPath).foreach(path => {
+            /*Option(new DijkstraShortestPath(fullGraph, i, j, 100).getPath).foreach(path => {
               println(path.getEdgeList.map(e => s"${fullGraph.getEdgeSource(e)} -- ${fullGraph.getEdgeTarget(e)}"))
-            })
+            })*/
             failures = failures + 1
         }
       Await.ready(future, 5 seconds)

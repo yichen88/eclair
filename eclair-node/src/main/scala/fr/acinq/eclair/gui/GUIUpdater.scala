@@ -7,28 +7,16 @@ import javafx.scene.control.Separator
 import javafx.stage.Stage
 
 import akka.actor.{Actor, ActorLogging, ActorRef}
-import com.mxgraph.layout.mxCircleLayout
-import com.mxgraph.swing.mxGraphComponent
-import fr.acinq.bitcoin.BinaryData
-import fr.acinq.eclair._
+import fr.acinq.eclair.Setup
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.ChannelDiscovered
-import fr.acinq.eclair.{Globals, Setup}
 import lightning.channel_desc
-import org.jgrapht.ext.JGraphXAdapter
-import org.jgrapht.graph.{DefaultEdge, SimpleGraph}
 
 
 /**
   * Created by PM on 16/08/2016.
   */
 class GUIUpdater(primaryStage: Stage, helloWorld: MainWindow, setup: Setup) extends Actor with ActorLogging {
-
-  class NamedEdge(val id: BinaryData) extends DefaultEdge {
-    override def toString: String = s"${id.toString.take(8)}..."
-  }
-  val graph = new SimpleGraph[BinaryData, NamedEdge](classOf[NamedEdge])
-  graph.addVertex(Globals.Node.publicKey)
 
   def receive: Receive = main(Map())
 
@@ -80,8 +68,8 @@ class GUIUpdater(primaryStage: Stage, helloWorld: MainWindow, setup: Setup) exte
         }
       })
 
-    case ChannelDiscovered(channel_desc(id, a, b)) =>
-      graph.addVertex(pubkey2bin(a))
+    case ChannelDiscovered(channel_desc(id, a, b)) => {}
+      /*graph.addVertex(pubkey2bin(a))
       graph.addVertex(pubkey2bin(b))
       graph.addEdge(a, b, new NamedEdge(id))
       val jgxAdapter = new JGraphXAdapter(graph)
@@ -93,7 +81,7 @@ class GUIUpdater(primaryStage: Stage, helloWorld: MainWindow, setup: Setup) exte
           lay.execute(jgxAdapter.getDefaultParent())
           helloWorld.swingNode.setContent(component)
         }
-      })
+      })*/
 
   }
 }

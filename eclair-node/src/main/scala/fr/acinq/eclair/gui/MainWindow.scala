@@ -1,6 +1,5 @@
 package fr.acinq.eclair.gui
 
-import java.io.File
 import javafx.application.{Application, Platform}
 import javafx.beans.value.{ChangeListener, ObservableValue}
 import javafx.embed.swing.SwingNode
@@ -14,7 +13,6 @@ import javafx.stage.FileChooser.ExtensionFilter
 import javafx.stage.{FileChooser, Stage, WindowEvent}
 
 import akka.actor.Props
-import com.mxgraph.swing.mxGraphComponent
 import fr.acinq.eclair.channel.ChannelEvent
 import fr.acinq.eclair.router.NetworkEvent
 import fr.acinq.eclair.{Globals, Setup}
@@ -106,13 +104,13 @@ class MainWindow extends Application {
             })
 
             def refreshGraph: Unit = {
-              Option(swingNode.getContent) match {
+              /*Option(swingNode.getContent) match {
                 case Some(component: mxGraphComponent) =>
                   component.doLayout()
                   component.repaint()
                   component.refresh()
                 case _ => {}
-              }
+              }*/
             }
 
             tabGraph.setOnSelectionChanged(new EventHandler[Event] {

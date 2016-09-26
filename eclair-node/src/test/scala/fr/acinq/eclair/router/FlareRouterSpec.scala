@@ -11,9 +11,6 @@ import fr.acinq.eclair._
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.FlareRouter._
 import lightning._
-import lightning.neighbor_onion.Next.{Forward, Req}
-import lightning.routing_table_update.update_type.OPEN
-import org.jgrapht.graph.SimpleGraph
 import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
 import org.scalatest.{BeforeAndAfterAll, FunSuiteLike}
@@ -34,7 +31,7 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
 
   import FlareRouterSpec._
 
-  def edge(bin: BinaryData): NamedEdge = {
+  /*def edge(bin: BinaryData): NamedEdge = {
     require(bin.size == 2)
     NamedEdge(sha256_hash(bin.data(0), bin.data(1), 0, 0))
   }
@@ -106,7 +103,7 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     )
     val (graph1, _) = include(myself, graph, updates, 2, Set())
     assert(graph1.vertexSet().contains(nodeIds(3)))
-  }
+  }*/
 
   test("basic routing and discovery") {
     val radius = 2
