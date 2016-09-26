@@ -310,10 +310,10 @@ object FlareRouter {
         val a = getOrAdd(graph1, channel.nodeA)
         val b = getOrAdd(graph1, channel.nodeB)
         // optimistic, doesn't matter if it fails
-        Try(graph1.addEdge(sha2562string(channel.channelId), a, b))
+        Try(graph1.addEdge[Edge](sha2562string(channel.channelId), a, b))
       case routing_table_update(channel, CLOSE) =>
         // optimistic, doesn't matter if it fails
-        Try(graph1.removeEdge(sha2562string(channel.channelId)))
+        Try(graph1.removeEdge[Edge](sha2562string(channel.channelId)))
     }
     val myselfNode = graph1.getNode[MultiNode](pubkey2string(myself))
     val dijkstra = new Dijkstra()

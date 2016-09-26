@@ -13,7 +13,7 @@ import fr.acinq.eclair.router.FlareRouter
 import fr.acinq.eclair.router.FlareRouter.{FlareInfo, RouteRequest, RouteResponse}
 import lightning.{channel_desc, routing_table}
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics
-import org.graphstream.graph.Node
+import org.graphstream.graph.{Edge, Node}
 import org.graphstream.graph.implementations.SingleGraph
 
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -112,7 +112,7 @@ object Simulator extends App {
       val srcNode = getOrAddNode(source)
       targets.filter(_ > source).foreach(target => {
         val tgtNode = getOrAddNode(target)
-        fullGraph.addEdge(s"$source-$target", srcNode, tgtNode)
+        fullGraph.addEdge[Edge](s"$source-$target", srcNode, tgtNode)
       })
   }
 
