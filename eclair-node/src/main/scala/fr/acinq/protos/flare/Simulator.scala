@@ -216,7 +216,7 @@ object Simulator extends App {
       if ((success + failures) % 10 == 0) {
         val successRate = (100 * success) / (success + failures)
         val progress = 100 * i.toDouble / (maxId - 1)
-        println(f"tested=${success + failures} success=$successRate%.2f%% avgLen=${routeStats.getMean}%.2f maxLen=${routeStats.getMean}%.2f varLen=${routeStats.getVariance}%.2f progress=$progress%.2f%%")
+        println(f"tested=${success + failures} success=$successRate%.2f%% avgLen=${routeStats.getMean}%.2f maxLen=${routeStats.getMax}%.2f varLen=${routeStats.getVariance}%.2f progress=$progress%.2f%%")
       }
     }
   }
