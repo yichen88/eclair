@@ -227,6 +227,15 @@ message channel_desc {
   required bitcoin_pubkey node_b = 3;
 }
 
+message channel_info {
+  required sha256_hash channel_id = 1;
+  required bitcoin_pubkey node = 2;
+  // available amount for payment *from* this node through this channel
+  required uint32 amount_msat = 3;
+  // fee requested to relay payment *to* this channel
+  required uint32 fee_rate = 4;
+}
+
 message routing_table {
   repeated channel_desc channels = 1;
 }
