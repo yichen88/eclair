@@ -123,12 +123,7 @@ object Simulator extends App {
   val indexMap = (0 to maxId).map(i => nodeIds(i) -> i).toMap
 
   val system = ActorSystem("mySystem")
-  val routers = (0 to maxId).map(_ match {
-    case i if i == 0 =>
-      val actor = system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString())
-      system.actorOf(Props(new NetMetricsActor(actor)), "net-metrics")
-    case i => system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString())
-  })
+  val routers = (0 to maxId).map(i => system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString()))
 
   def createChannel(a: Int, b: Int): Unit = {
     routers(a) ! genChannelChangedState(routers(b), nodeIds(b), channelId(nodeIds(a), nodeIds(b)), 1000000000)
