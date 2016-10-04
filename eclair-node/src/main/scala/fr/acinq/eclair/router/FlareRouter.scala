@@ -1,17 +1,18 @@
 package fr.acinq.eclair.router
 
+import java.io.{ByteArrayOutputStream, OutputStreamWriter}
 import java.util.UUID
 
 import akka.actor.{Actor, ActorLogging, ActorRef}
 import akka.pattern.pipe
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
-import fr.acinq.eclair.channel.{ChannelChangedState, DATA_NORMAL, NORMAL}
-import lightning.neighbor_onion.Next.{Ack, Forward, Req}
-import lightning.routing_table_update.update_type._
-import lightning.{channel_desc, _}
+import fr.acinq.eclair.channel._
+import lightning._
+import lightning.neighbor_onion.Next._
+import lightning.routing_table_update.Update.{ChannelClose, ChannelOpen}
 import org.graphstream.algorithm.Dijkstra
-import org.graphstream.graph.Edge
+import org.graphstream.graph.{Edge, Node}
 import org.graphstream.graph.implementations.{MultiGraph, MultiNode}
 
 import scala.collection.JavaConversions._
@@ -27,28 +28,39 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
   val MAX_BEACON_DISTANCE = 100
 
   context.system.eventStream.subscribe(self, classOf[ChannelChangedState])
+  context.system.eventStream.subscribe(self, classOf[ChannelSignatureReceived])
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
   if (ticks) {
     context.system.scheduler.schedule(10 seconds, 20 seconds, self, 'tick_beacons)
     context.system.scheduler.schedule(1 minute, 1 minute, self, 'tick_reset)
+    context.system.scheduler.schedule(1 minute, 1 minute, self, 'tick_subscribe)
   }
 
   import FlareRouter._
 
-  override def receive: Receive = main(new MultiGraph(UUID.randomUUID().toString), null, Nil, Nil, Set())
+  override def receive: Receive = main(new MultiGraph(UUID.randomUUID().toString), null, Nil, Nil, Nil, Set(), Map(), Set(), Map(), 0)
 
-  def main(graph: MultiGraph, dijkstra: Dijkstra, neighbors: List[Neighbor], updatesBatch: List[routing_table_update], beacons: Set[Beacon]): Receive = {
+  def main(graph: MultiGraph, dijkstra: Dijkstra, neighbors: List[Neighbor], routingUpdatesBatch: List[routing_table_update], channelUpdatesBatch: List[channel_state_update], beacons: Set[Beacon], channelStates: Map[ChannelOneEnd, channel_state_update], subscribed: Set[bitcoin_pubkey], subscribers: Map[bitcoin_pubkey, Seq[bitcoin_pubkey]], mysequence: Int): Receive = {
     case ChannelChangedState(_, connection, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
-      val neighbor = Neighbor(theirNodeId, d.commitments.anchorId, connection, Nil)
-      val channelDesc = channel_desc(neighbor.channel_id, myself, neighbor.node_id)
-      val updates = routing_table_update(channelDesc, OPEN) :: Nil
+      val stateUpdate = commitments2channelState(mysequence, myself, d.commitments)
+      val neighbor = Neighbor(theirNodeId, stateUpdate.channelId, connection, Nil)
+      val channelOpen = channel_open(neighbor.channel_id, myself, neighbor.node_id)
+      val updates = routing_table_update(ChannelOpen(channelOpen)) :: Nil
       val (graph1, updates1, dijkstra1) = include(myself, graph, updates, radius, beacons.map(_.id))
       neighbor.connection ! neighbor_hello(graph2table(graph1))
       log.debug(s"graph is now ${graph2string(graph1)}")
+      val channelStates1 = channelStates + (ChannelOneEnd(stateUpdate.channelId, stateUpdate.node) -> stateUpdate)
+      log.debug(s"channel states are now ${states2string(channelStates1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
-      context become main(graph1, dijkstra1, neighbors :+ neighbor, updatesBatch ++ updates1, beacons)
+      context become main(graph1, dijkstra1, neighbors :+ neighbor, routingUpdatesBatch ++ updates1, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1)
+    case ChannelSignatureReceived(channel, commitments) =>
+      val stateUpdate = commitments2channelState(mysequence, myself, commitments)
+      val channelStates1 = channelStates + (ChannelOneEnd(stateUpdate.channelId, stateUpdate.node) -> stateUpdate)
+      log.debug(s"channel states are now ${states2string(channelStates1)}")
+      context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1)
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
       val (graph1, dijkstra1) = merge(myself, graph, table1, radius, beacons.map(_.id))
@@ -60,10 +72,11 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
       log.debug(s"graph is now ${graph2string(graph1)}")
-      context become main(graph1, dijkstra1, neighbors, updatesBatch, beacons)
-    case msg@neighbor_update(updates) =>
+      context become main(graph1, dijkstra1, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence)
+    case msg@neighbor_update(routingTableUpdates, channelStateUpdates) =>
       log.debug(s"received $msg from $sender")
-      val (graph1, updates1, dijkstra1) = include(myself, graph, updates, radius, beacons.map(_.id))
+      // STEP 1: routing table updates
+      val (graph1, updates1, dijkstra1) = include(myself, graph, routingTableUpdates, radius, beacons.map(_.id))
       // we send beacon req to every newly discovered node
       val new_nodes = (graph1.getNodeSet[MultiNode].map(node2pubkey(_)).toSet -- graph.getNodeSet[MultiNode].map(node2pubkey(_)).toSet)
       for (node <- new_nodes) {
@@ -72,23 +85,47 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
       log.debug(s"graph is now ${graph2string(graph1)}")
+      // STEP 2: channel state updates
+      val channelStateUpdates1 = channelStateUpdates.collect {
+        case u@channel_state_update(channelId, sequence, node, amountMsat, relayFee) if Option(graph.getEdge[Edge](sha2562string(channelId))).isDefined =>
+          channelStates.get(ChannelOneEnd(u.channelId, u.node)) match {
+            case Some(s) if s.sequence < sequence =>
+              log.debug(s"received channel state update #$sequence for channelId=$channelId node=$node amountMsat=$amountMsat relayFee=$relayFee")
+              u
+            case Some(s) =>
+              log.debug(s"ignoring channel state update #$sequence for channelId=$channelId node=$node (we are at sequence #${s.sequence}")
+              ""
+            case None =>
+              log.debug(s"received first channel state update #$sequence for channelId=$channelId node=$node amountMsat=$amountMsat relayFee=$relayFee")
+              u
+          }
+      } collect { case u: channel_state_update => u } // TODO ugly!
+    val channelStates1 = channelStateUpdates1.foldLeft(channelStates) {
+      case (states, u) => states + (ChannelOneEnd(u.channelId, u.node) -> u)
+    }
+      log.debug(s"channel states are now ${states2string(channelStates1)}")
       context.system.scheduler.scheduleOnce(3 second, self, 'tick_updates)
-      context become main(graph1, dijkstra1, neighbors, updatesBatch ++ updates1, beacons)
+      context become main(graph1, dijkstra1, neighbors, routingUpdatesBatch ++ updates1, channelUpdatesBatch ++ channelStateUpdates1, beacons, channelStates1, subscribed, subscribers, mysequence)
     case msg@neighbor_reset(channel_ids) =>
       log.debug(s"received neighbor_reset from $sender with ${channel_ids.size} channels")
-      val diff = graph2table(graph).channels.filterNot(c => channel_ids.contains(c.channelId)).map(c => routing_table_update(c, OPEN))
+      val diff = graph2table(graph).channels.filterNot(c => channel_ids.contains(c.channelId)).map(c => routing_table_update(ChannelOpen(c)))
       log.debug(s"sending back ${diff.size} channels to $sender")
       sender ! neighbor_update(diff)
-    case 'tick_updates if !updatesBatch.isEmpty =>
+    case 'tick_updates if !routingUpdatesBatch.isEmpty || !channelUpdatesBatch.isEmpty =>
+      // to neighbors
       val neighbors1 = neighbors.map(neighbor => {
-        val diff = updatesBatch.filterNot(neighbor.sent.contains(_))
-        if (diff.size > 0) {
-          log.debug(s"sending $diff to ${neighbor.node_id}")
-          neighbor.connection ! neighbor_update(diff)
+        val diff = routingUpdatesBatch.filterNot(neighbor.sent.contains(_))
+        if (diff.size > 0 || channelUpdatesBatch.size > 0) {
+          log.debug(s"sending $diff and $channelUpdatesBatch to ${neighbor.node_id}")
+          neighbor.connection ! neighbor_update(diff, channelUpdatesBatch)
         }
         neighbor.copy(sent = neighbor.sent ::: diff)
       })
-      context become main(graph, dijkstra, neighbors1, Nil, beacons)
+      // to suscribers
+      channelUpdatesBatch
+        .map(u => neighbor_onion(DynamicInfo(u)))
+        .foreach(msg => subscribers.foreach(suscriber => send(suscriber._2, neighbors, msg)))
+      context become main(graph, dijkstra, neighbors1, Nil, Nil, beacons, channelStates, subscribed, subscribers, mysequence)
     case 'tick_updates => // nothing to do
     case 'tick_reset =>
       val channel_ids = graph2table(graph).channels.map(_.channelId)
@@ -102,22 +139,43 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         val (channels1, route) = findRoute(dijkstra, getOrAdd(graph, myself), node)
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
+    case 'tick_subscribe =>
+      val subscribed1 = beacons.flatMap(beacon => findRoute(dijkstra, getOrAdd(graph, myself), getOrAdd(graph, beacon.id))._2) - myself
+      val remove = subscribed -- subscribed1
+      val add = subscribed1 -- subscribed
+      if (remove.size > 0) {
+        log.info(s"unsubscribing to ${remove.map(n => pubkey2string(n).take(6)).mkString(",")}")
+        val unsubscribeMsg = neighbor_onion(Unsubscribe(unsubscribe(myself)))
+        remove.foreach(node => send(findRoute(dijkstra, getOrAdd(graph, myself), getOrAdd(graph, node))._2, neighbors, unsubscribeMsg))
+      }
+      if (add.size > 0) {
+        log.info(s"subscribing to ${add.map(n => pubkey2string(n).take(6)).mkString(",")}")
+        add.foreach(node => {
+          val (channels, route) = findRoute(dijkstra, getOrAdd(graph, myself), getOrAdd(graph, node))
+          val subscribeMsg = neighbor_onion(Subscribe(subscribe(myself, channels)))
+          send(route, neighbors, subscribeMsg)
+        })
+      }
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed1, subscribers, mysequence)
     case msg@neighbor_onion(onion) =>
       (onion: @unchecked) match {
         case lightning.neighbor_onion.Next.Forward(next) =>
           //log.debug(s"forwarding $msg to ${next.node}")
-          val neighbor = next.node
+          val neighbor = next.toNode
           neighbor2channel(neighbor, neighbors) match {
             case Some(channel) => channel ! next.onion
             case None => log.error(s"could not find channel for neighbor $neighbor, cannot forward $msg")
           }
         case lightning.neighbor_onion.Next.Req(req) => self ! req
         case lightning.neighbor_onion.Next.Ack(ack) => self ! ack
+        case lightning.neighbor_onion.Next.Subscribe(subscribe) => self ! subscribe
+        case lightning.neighbor_onion.Next.Unsubscribe(unsubscribe) => self ! unsubscribe
+        case lightning.neighbor_onion.Next.DynamicInfo(dynamic_info) => self ! dynamic_info
       }
     case msg@beacon_req(origin, channels) =>
       log.debug(s"received beacon_req msg from $origin with channels=${channels2string(channels)}")
       // adding routes to my table so that I can reply to the origin
-      val updates = channels.map(channelDesc => routing_table_update(channelDesc, OPEN)).toList
+      val updates = channels.map(channel => routing_table_update(ChannelOpen(channel))).toList
       // TODO : maybe we should allow an even larger radius, because their MAX_BEACON_DISTANCE could be larger than ours
       val (graph1, _, dijkstra1) = include(myself, graph, updates, MAX_BEACON_DISTANCE, Set())
       val (channels1, route) = findRoute(dijkstra1, getOrAdd(graph1, myself), getOrAdd(graph1, origin))
@@ -148,7 +206,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       }
     case msg@beacon_ack(origin, alternative_opt, channels) =>
       log.debug(s"received beacon_ack msg from $origin with alternative=$alternative_opt channels=${channels2string(channels)}")
-      val updates = channels.map(channelDesc => routing_table_update(channelDesc, OPEN)).toList
+      val updates = channels.map(channel => routing_table_update(ChannelOpen(channel))).toList
       val (graph1, _, dijkstra1) = include(myself, graph, updates, MAX_BEACON_DISTANCE, Set())
       alternative_opt match {
         // order matters!
@@ -179,26 +237,58 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         val (channels1, _) = findRoute(dijkstra1, getOrAdd(graph1, myself), getOrAdd(graph1, origin))
         beacons - deprecatedBeacon + Beacon(origin, distance(myself, origin), channels1.size)
       } else {
-        log.debug(s"ignoring beacon candidate $origin")
+        log.info(s"ignoring beacon candidate $origin")
         beacons
       }
       // this will cause old beacons to be removed from the graph
       val (graph2, _, dijkstra2) = include(myself, graph1, Nil, radius, beacons1.map(_.id))
       log.debug(s"graph is now ${graph2string(graph2)}")
       log.debug(s"my beacons are now ${beacons1.map(b => s"${pubkey2string(b.id).take(6)}(${b.hops})").mkString(",")}")
-      context become main(graph2, dijkstra2, neighbors, updatesBatch, beacons1)
-    case RouteRequest(target, targetTable) =>
-      val g1 = copy(graph)
-      val (g2, dijkstra2) = merge(myself, g1, targetTable, 100, Set())
-      Future(findRoute(dijkstra2, getOrAdd(g2, myself), getOrAdd(g2, target))).map(r => RouteResponse(r._2)) pipeTo sender
+      context become main(graph2, dijkstra2, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons1, channelStates, subscribed, subscribers, mysequence)
+    case msg@subscribe(origin, channels) =>
+      log.debug(s"received register msg from $origin with channels=${channels2string(channels)}")
+      // adding routes to my table so that I can reply to the origin
+      val updates = channels.map(channel => routing_table_update(ChannelOpen(channel))).toList
+      // TODO : maybe we should allow an even larger radius, because their MAX_BEACON_DISTANCE could be larger than ours
+      val (graph1, _, dijkstra1) = include(myself, graph, updates, MAX_BEACON_DISTANCE, Set())
+      val (_, route) = findRoute(dijkstra1, getOrAdd(graph1, myself), getOrAdd(graph1, origin))
+      val subscribers1 = subscribers + (origin -> route)
+      log.debug(s"subscribers are now ${subscribers2string(subscribers1)}")
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers1, mysequence)
+    case msg@unsubscribe(origin) =>
+      log.info(s"received unregister msg from $origin")
+      val subscribers1 = subscribers - origin
+      log.debug(s"subscribers are now ${subscribers2string(subscribers1)}")
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers1, mysequence)
+    case msg@channel_state_update(channelId, sequence, node, amountMsat, relayFee) =>
+      log.debug(s"received dynamic info from $node for channelId=$channelId")
+      val channelStates1 = if (Option(graph.getEdge[Edge](sha2562string(channelId))).isDefined) {
+        channelStates.get(ChannelOneEnd(channelId, node)) match {
+          case Some(s) if s.sequence < sequence =>
+            log.debug(s"received channel state update #$sequence for channelId=$channelId node=$node amountMsat=$amountMsat relayFee=$relayFee")
+            channelStates + (ChannelOneEnd(channelId, node) -> msg)
+          case Some(s) =>
+            log.debug(s"ignoring channel state update #$sequence for channelId=$channelId node=$node (we are at sequence #${s.sequence}")
+            channelStates
+          case None =>
+            log.debug(s"received first channel state update #$sequence for channelId=$channelId node=$node amountMsat=$amountMsat relayFee=$relayFee")
+            channelStates + (ChannelOneEnd(channelId, node) -> msg)
+        }
+      } else channelStates
+      log.debug(s"channel states are now ${states2string(channelStates1)}")
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates1, subscribed, subscribers, mysequence)
+    case RouteRequest(req) =>
+      Future(findPaymentRoute(myself, req.nodeId, req.amountMsat, merge(channelStates, req.states))).map(RouteResponse(_)) pipeTo sender
     case 'network =>
       sender ! graph2table(graph).channels
+    case 'states =>
+      sender ! channelStates.values.toSeq
     case 'beacons =>
       sender ! beacons
     case 'info =>
       sender ! FlareInfo(neighbors.map(_.node_id).size, graph.getNodeCount, beacons)
     case 'dot =>
-      sender ! graph2dot(myself, graph, beacons.map(_.id))
+      sender ! graph2dot(myself, graph, beacons.map(_.id), channelStates)
   }
 
   def send(route: Seq[bitcoin_pubkey], neighbors: List[Neighbor], msg: neighbor_onion): Unit = {
@@ -220,21 +310,26 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
 object FlareRouter {
 
   // @formatter:off
-  case class Neighbor(node_id: bitcoin_pubkey, channel_id: BinaryData, connection: ActorRef, sent: List[routing_table_update])
+  case class Neighbor(node_id: bitcoin_pubkey, channel_id: sha256_hash, connection: ActorRef, sent: List[routing_table_update])
   case class Beacon(id: bitcoin_pubkey, distance: BigInt, hops: Int)
+  case class ChannelOneEnd(channel_id: sha256_hash, node_id: bitcoin_pubkey)
   case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
-  case class RouteRequest(target: bitcoin_pubkey, targetTable: routing_table)
+  case class RouteRequest(req: payment_request)
   case class RouteResponse(route: Seq[bitcoin_pubkey])
   // @formatter:on
+
+  def commitments2channelState(sequence: Int, myself: bitcoin_pubkey, commitments: Commitments): channel_state_update =
+  // TODO : no fees
+    channel_state_update(commitments.anchorId, sequence, myself, commitments.ourCommit.spec.amount_us_msat.toInt, 0)
 
   def graph2table(graph: MultiGraph): routing_table =
     routing_table(graph.getEdgeSet[Edge].map(edge2ChannelDesc(_)).toSeq)
 
-  def node2pubkey(node: MultiNode): bitcoin_pubkey =
+  def node2pubkey(node: Node): bitcoin_pubkey =
     bin2pubkey(BinaryData(node.getId))
 
-  def edge2ChannelDesc(edge: Edge): channel_desc =
-    channel_desc(bin2sha256(BinaryData(edge.getId)), bin2pubkey(BinaryData(edge.getSourceNode[MultiNode].getId)), bin2pubkey(BinaryData(edge.getTargetNode[MultiNode].getId)))
+  def edge2ChannelDesc(edge: Edge): channel_open =
+    channel_open(bin2sha256(BinaryData(edge.getId)), bin2pubkey(BinaryData(edge.getSourceNode[MultiNode].getId)), bin2pubkey(BinaryData(edge.getTargetNode[MultiNode].getId)))
 
   def channelId2sha256(edge: Edge): sha256_hash =
     bin2sha256(BinaryData(edge.getId))
@@ -242,48 +337,44 @@ object FlareRouter {
   def graph2string(graph: MultiGraph): String =
     s"node_count=${graph.getNodeCount} edges: " + channels2string(graph2table(graph).channels)
 
+  def states2string(states: Map[ChannelOneEnd, channel_state_update]): String =
+    states.values.map(s => s"${pubkey2string(s.node)}@${s.channelId} -> avail: ${s.amountMsat} fee: ${s.relayFee}").mkString(",")
+
+  def subscribers2string(suscribers: Map[bitcoin_pubkey, Seq[bitcoin_pubkey]]): String =
+    s"suscribers=${suscribers.keys.map(n => pubkey2string(n).take(6)).mkString(",")}"
+
   def pubkey2string(pubkey: bitcoin_pubkey): String =
     pubkey2bin(pubkey).toString()
 
   def sha2562string(hash: sha256_hash): String =
     sha2562bin(hash).toString()
 
-  def channels2string(channels: Seq[channel_desc]): String =
+  def channels2string(channels: Seq[channel_open]): String =
     channels.map(c => s"${pubkey2string(c.nodeA).take(6)}->${pubkey2string(c.nodeB).take(6)}").mkString(" ")
 
-  def graph2dot(myself: bitcoin_pubkey, graph: MultiGraph, beacons: Set[bitcoin_pubkey]): BinaryData = BinaryData("")
+  def graph2dot(myself: bitcoin_pubkey, g: MultiGraph, beacons: Set[bitcoin_pubkey], channelStates: Map[ChannelOneEnd, channel_state_update]): String = {
+    val nodes = g.getNodeIterator[MultiNode].map(node => s""""${node.getId}" [label="${node.getId.take(6)}" tooltip="${node.getId}"];""").mkString("\n")
+    val centerColor = s""""${pubkey2string(myself)}" [color=blue];"""
+    val beaconsColor = beacons.map(beacon => s""""${pubkey2string(beacon)}" [color=red];""").mkString("\n")
+    val edges = g.getEdgeSet[Edge]
+      .flatMap(edge => {
+        val src = ChannelOneEnd(BinaryData(edge.getId), BinaryData(edge.getSourceNode[MultiNode].getId))
+        val srcAvail = channelStates.get(src).map(_.amountMsat)
+        val tgt = ChannelOneEnd(BinaryData(edge.getId), BinaryData(edge.getTargetNode[MultiNode].getId))
+        val tgtAvail = channelStates.get(tgt).map(_.amountMsat)
+        s""" "${pubkey2string(src.node_id)}" -> "${pubkey2string(tgt.node_id)}" [fontsize=8 labeltooltip="${edge.getId}" label=${srcAvail.getOrElse("unknown")}];""" ::
+          s""" "${pubkey2string(tgt.node_id)}" -> "${pubkey2string(src.node_id)}" [fontsize=8 labeltooltip="${edge.getId}" label=${tgtAvail.getOrElse("unknown")}];""" :: Nil
+      }).mkString("\n")
 
-  /*{
-     val vertexIDProvider = new VertexNameProvider[bitcoin_pubkey]() {
-       override def getVertexName(v: bitcoin_pubkey): String = s""""${pubkey2bin(v).toString.take(6)}""""
-     }
-     val edgeLabelProvider = new EdgeNameProvider[NamedEdge]() {
-       override def getEdgeName(e: NamedEdge): String = sha2562bin(e.id).toString().take(6)
-     }
-     val vertexAttributeProvider = new ComponentAttributeProvider[bitcoin_pubkey]() {
-
-       import scala.collection.JavaConversions._
-
-       override def getComponentAttributes(t: bitcoin_pubkey): util.Map[String, String] =
-         if (t == myself) {
-           Map("color" -> "blue")
-         } else if (beacons.contains(t)) {
-           Map("color" -> "red")
-         } else {
-           Map("color" -> "black")
-         }
-     }
-     val exporter = new DOTExporter[bitcoin_pubkey, NamedEdge](vertexIDProvider, null, edgeLabelProvider, vertexAttributeProvider, null)
-     val bos = new ByteArrayOutputStream()
-     val writer = new OutputStreamWriter(bos)
-     try {
-       exporter.export(writer, graph)
-       bos.toByteArray
-     } finally {
-       writer.close()
-       bos.close()
-     }
-   }*/
+      s"""digraph G {
+          |rankdir=LR;
+          |$nodes
+          |$centerColor
+          |$beaconsColor
+          |$edges
+          |}
+    """.stripMargin
+   }
 
   def copy(graph: MultiGraph): MultiGraph = {
     val g1 = new MultiGraph(UUID.randomUUID().toString)
@@ -293,7 +384,7 @@ object FlareRouter {
   }
 
   def merge(myself: bitcoin_pubkey, graph: MultiGraph, table2: routing_table, radius: Int, beacons: Set[bitcoin_pubkey]): (MultiGraph, Dijkstra) = {
-    val updates = table2.channels.map(c => routing_table_update(c, OPEN))
+    val updates = table2.channels.map(c => routing_table_update(ChannelOpen(c)))
     val (graph1, _, dijkstra1) = include(myself, graph, updates, radius, beacons)
     (graph1, dijkstra1)
   }
@@ -306,14 +397,14 @@ object FlareRouter {
   def include(myself: bitcoin_pubkey, graph: MultiGraph, updates: Seq[routing_table_update], radius: Int, beacons: Set[bitcoin_pubkey]): (MultiGraph, Seq[routing_table_update], Dijkstra) = {
     val graph1 = copy(graph)
     updates.collect {
-      case routing_table_update(channel, OPEN) =>
-        val a = getOrAdd(graph1, channel.nodeA)
-        val b = getOrAdd(graph1, channel.nodeB)
+      case routing_table_update(ChannelOpen(channel_open(channelId, nodeA, nodeB))) =>
+        val a = getOrAdd(graph1, nodeA)
+        val b = getOrAdd(graph1, nodeB)
         // optimistic, doesn't matter if it fails
-        Try(graph1.addEdge[Edge](sha2562string(channel.channelId), a, b))
-      case routing_table_update(channel, CLOSE) =>
+        Try(graph1.addEdge[Edge](sha2562string(channelId), a, b))
+      case routing_table_update(ChannelClose(channel_close(channelId))) =>
         // optimistic, doesn't matter if it fails
-        Try(graph1.removeEdge[Edge](sha2562string(channel.channelId)))
+        Try(graph1.removeEdge[Edge](sha2562string(channelId)))
     }
     val myselfNode = graph1.getNode[MultiNode](pubkey2string(myself))
     val dijkstra = new Dijkstra()
@@ -333,13 +424,13 @@ object FlareRouter {
     val origChannels = graph.getEdgeSet[Edge].map(e => BinaryData(e.getId)).toSet
     val newChannels = graph1.getEdgeSet[Edge].map(e => BinaryData(e.getId)).toSet
     val updates1 = updates.collect {
-      case u@routing_table_update(channel, OPEN) if !origChannels.contains(channel.channelId) && newChannels.contains(channel.channelId) => u
-      case u@routing_table_update(channel, CLOSE) if origChannels.contains(channel.channelId) && !newChannels.contains(channel.channelId) => u
+      case u@routing_table_update(ChannelOpen(channel_open(channelId, _, _))) if !origChannels.contains(channelId) && newChannels.contains(channelId) => u
+      case u@routing_table_update(ChannelClose(channel_close(channelId))) if origChannels.contains(channelId) && !newChannels.contains(channelId) => u
     }
     (graph1, updates1, dijkstra)
   }
 
-  def findRoute(dijkstra: Dijkstra, source: MultiNode, target: MultiNode): (Seq[channel_desc], Seq[bitcoin_pubkey]) = {
+  def findRoute(dijkstra: Dijkstra, source: MultiNode, target: MultiNode): (Seq[channel_open], Seq[bitcoin_pubkey]) = {
     // make sure that the precomputed dijkstra was for the same source
     require(dijkstra.getSource[MultiNode] == source)
     // note: dijkstra path are given in reverse orders
@@ -350,7 +441,7 @@ object FlareRouter {
 
   def buildOnion(nodes: Seq[bitcoin_pubkey], msg: neighbor_onion): neighbor_onion = {
     nodes.reverse.foldLeft(msg) {
-      case (o, next) => neighbor_onion(Forward(beacon_forward(next, o)))
+      case (o, next) => neighbor_onion(Forward(forward(next, o)))
     }
   }
 
@@ -362,6 +453,36 @@ object FlareRouter {
     val c = new Array[Byte](a.length)
     for (i <- 0 until a.length) c(i) = ((a.data(i) ^ b.data(i)) & 0xff).toByte
     BigInt(1, c)
+  }
+
+  def merge(states1: Map[ChannelOneEnd, channel_state_update], states2: Seq[channel_state_update]): Iterable[channel_state_update] = {
+    states2.foldLeft(states1) {
+      case (m, u) if !m.containsKey(ChannelOneEnd(u.channelId, u.node)) => m + (ChannelOneEnd(u.channelId, u.node) -> u)
+      case (m, u) if m(ChannelOneEnd(u.channelId, u.node)).sequence < u.sequence => m + (ChannelOneEnd(u.channelId, u.node) -> u)
+      case (m, _) => m
+    }.values
+  }
+
+  def findPaymentRoute(source: bitcoin_pubkey, target: bitcoin_pubkey, amountMsat: Int, states: Iterable[channel_state_update]): Seq[bitcoin_pubkey] = {
+    val g = new MultiGraph(UUID.randomUUID().toString)
+    // unique nodes
+    val nodes = states.map(_.node).toSet
+    nodes.foreach(node => g.addNode[MultiNode](pubkey2string(node)))
+    // edges for which we have the two ends
+    val edges = states.groupBy(_.channelId).filter(_._2.size == 2).mapValues(_.map(_.node).toList)
+    // let's filter out channels that don't have the required amount available
+    // note: +10 % because fees, which are cumulative so need to be conservative
+    val states1 = states.filter(_.amountMsat > 1.1 * amountMsat)
+    // adding *directed* edges
+    states1.collect {
+      case u if edges(u.channelId)(0) != u.node => g.addEdge[Edge](sha2562string(u.channelId) + pubkey2string(u.node), pubkey2string(u.node), pubkey2string(edges(u.channelId)(0)), true)
+      case u if edges(u.channelId)(1) != u.node => g.addEdge[Edge](sha2562string(u.channelId) + pubkey2string(u.node), pubkey2string(u.node), pubkey2string(edges(u.channelId)(1)), true)
+    }
+    val dijkstra = new Dijkstra()
+    dijkstra.init(g)
+    dijkstra.setSource(g.getNode[MultiNode](pubkey2string(source)))
+    dijkstra.compute()
+    dijkstra.getPath(g.getNode[MultiNode](pubkey2string(target))).getNodePath.map(node2pubkey(_))
   }
 
 }

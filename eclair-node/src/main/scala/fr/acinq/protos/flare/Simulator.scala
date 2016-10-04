@@ -11,10 +11,10 @@ import fr.acinq.eclair._
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.FlareRouter
 import fr.acinq.eclair.router.FlareRouter.{FlareInfo, RouteRequest, RouteResponse}
-import lightning.{channel_desc, routing_table}
+import lightning._
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics
-import org.graphstream.graph.{Edge, Node}
 import org.graphstream.graph.implementations.SingleGraph
+import org.graphstream.graph.{Edge, Node}
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
@@ -106,7 +106,9 @@ object Simulator extends App {
   }
 
   val fullGraph = new SingleGraph("simulator")
+
   def getOrAddNode(i: Int): Node = Option(fullGraph.getNode[Node](i.toString)).getOrElse(fullGraph.addNode[Node](i.toString))
+
   links.foreach {
     case (source, targets) =>
       val srcNode = getOrAddNode(source)
@@ -129,8 +131,8 @@ object Simulator extends App {
   })
 
   def createChannel(a: Int, b: Int): Unit = {
-    routers(a) ! genChannelChangedState(routers(b), nodeIds(b), channelId(nodeIds(a), nodeIds(b)))
-    routers(b) ! genChannelChangedState(routers(a), nodeIds(a), channelId(nodeIds(a), nodeIds(b)))
+    routers(a) ! genChannelChangedState(routers(b), nodeIds(b), channelId(nodeIds(a), nodeIds(b)), 1000000000)
+    routers(b) ! genChannelChangedState(routers(a), nodeIds(a), channelId(nodeIds(a), nodeIds(b)), 1000000000)
   }
 
   links.foreach { case (source, targets) => targets.filter(_ > source).foreach(target => createChannel(source, target)) }
@@ -197,8 +199,10 @@ object Simulator extends App {
   for (i <- 0 to maxId) {
     for (j <- Random.shuffle(i + 1 to maxId)) {
       val future = (for {
-        channels <- (routers(j) ? 'network).mapTo[Seq[channel_desc]]
-        request = RouteRequest(nodeIds(j), routing_table(channels))
+        channels <- (routers(j) ? 'network).mapTo[Seq[channel_open]]
+        states <- (routers(j) ? 'states).mapTo[Seq[channel_state_update]]
+        req = payment_request(nodeIds(j), 1, sha256_hash(1, 2, 3, 4), routing_table(channels), states)
+        request = RouteRequest(req)
         response <- (routers(i) ? request).mapTo[RouteResponse]
       } yield {
         success = success + 1
@@ -231,13 +235,19 @@ object Simulator extends App {
     Crypto.sha256(a)
   }
 
-  def genChannelChangedState(them: ActorRef, theirNodeId: BinaryData, channelId: BinaryData): ChannelChangedState =
-    ChannelChangedState(null, them, theirNodeId, null, NORMAL, DATA_NORMAL(new Commitments(null, null, null, null, null, null, 0L, null, null, null, null) {
+  def genChannelChangedState(them: ActorRef, theirNodeId: BinaryData, channelId: BinaryData, available_amount: Int): ChannelChangedState =
+    ChannelChangedState(null, them, theirNodeId, null, NORMAL, DATA_NORMAL(new Commitments(null, null,
+      OurCommit(0, CommitmentSpec(Set(), 0, 0, 0, available_amount, 0), null),
+      null, null, null, 0L, null, null, null, null) {
       override def anchorId: BinaryData = channelId // that's the only thing we need
     }, null, null))
 
   def printToFile(f: java.io.File)(op: java.io.OutputStream => Unit) {
     val p = new BufferedOutputStream(new FileOutputStream(f))
-    try { op(p) } finally { p.close() }
+    try {
+      op(p)
+    } finally {
+      p.close()
+    }
   }
 }

@@ -13,12 +13,10 @@ import lightning._
 
 // @formatter:off
 
-case class CreatePayment(amountMsat: Int, h: sha256_hash, targetNodeId: BinaryData, table: routing_table)
-
 sealed trait Data
 case class WaitingForRequest(currentBlockCount: Long) extends Data
-case class WaitingForRoute(sender: ActorRef, c: CreatePayment, currentBlockCount: Long) extends Data
-case class WaitingForChannel(sender: ActorRef,c: CreatePayment, r: Seq[bitcoin_pubkey], currentBlockCount: Long) extends Data
+case class WaitingForRoute(sender: ActorRef, c: payment_request, currentBlockCount: Long) extends Data
+case class WaitingForChannel(sender: ActorRef,c: payment_request, r: Seq[bitcoin_pubkey], currentBlockCount: Long) extends Data
 case class WaitingForComplete(sender: ActorRef,c: CMD_ADD_HTLC, channel: ActorRef) extends Data
 
 sealed trait State
@@ -41,8 +39,8 @@ class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
   startWith(WAITING_FOR_REQUEST, WaitingForRequest(initialBlockCount))
 
   when(WAITING_FOR_REQUEST) {
-    case Event(c: CreatePayment, WaitingForRequest(currentBlockCount)) =>
-      router ! RouteRequest(c.targetNodeId, c.table)
+    case Event(c: payment_request, WaitingForRequest(currentBlockCount)) =>
+      router ! RouteRequest(c)
       goto(WAITING_FOR_ROUTE) using WaitingForRoute(sender, c, currentBlockCount)
 
     case Event(CurrentBlockCount(currentBlockCount), d: WaitingForRequest) =>
@@ -67,7 +65,7 @@ class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
       val next = r.drop(1).head
       val others = r.drop(2)
       val route = buildRoute(c.amountMsat, next +: others)
-      val cmd = CMD_ADD_HTLC(route.steps(0).amount, c.h, locktime(Blocks(currentBlockCount.toInt + 100 + route.steps.size - 2)), route.copy(steps = route.steps.tail), commit = true)
+      val cmd = CMD_ADD_HTLC(route.steps(0).amount, c.rHash, locktime(Blocks(currentBlockCount.toInt + 100 + route.steps.size - 2)), route.copy(steps = route.steps.tail), commit = true)
       context.system.eventStream.subscribe(self, classOf[PaymentEvent])
       context.system.eventStream.unsubscribe(self, classOf[CurrentBlockCount])
       channel ! cmd

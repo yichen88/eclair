@@ -10,7 +10,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef}
 import fr.acinq.eclair.Setup
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.router.ChannelDiscovered
-import lightning.channel_desc
+import lightning.channel_open
 
 
 /**
@@ -68,7 +68,7 @@ class GUIUpdater(primaryStage: Stage, helloWorld: MainWindow, setup: Setup) exte
         }
       })
 
-    case ChannelDiscovered(channel_desc(id, a, b)) => {}
+    case ChannelDiscovered(channel_open(id, a, b)) => {}
       /*graph.addVertex(pubkey2bin(a))
       graph.addVertex(pubkey2bin(b))
       graph.addEdge(a, b, new NamedEdge(id))

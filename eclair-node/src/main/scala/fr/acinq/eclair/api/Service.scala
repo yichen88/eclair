@@ -12,10 +12,9 @@ import fr.acinq.bitcoin.{BinaryData, Satoshi}
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel.Register.{ListChannels, SendCommand}
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.router.CreatePayment
-import fr.acinq.eclair.router.FlareRouter.{Beacon, FlareInfo, RouteRequest, RouteResponse}
+import fr.acinq.eclair.router.FlareRouter.{FlareInfo, RouteRequest, RouteResponse}
 import grizzled.slf4j.Logging
-import lightning.channel_desc
+import lightning.{channel_open, channel_state_update, payment_request}
 import org.json4s.JsonAST.JString
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
@@ -77,27 +76,31 @@ trait Service extends Logging {
                 (register ? ListChannels).mapTo[Iterable[ActorRef]]
                   .flatMap(l => Future.sequence(l.map(c => c ? CMD_GETINFO)))
               case JsonRPCBody(_, _, "network", _) =>
-                (router ? 'network).mapTo[Iterable[channel_desc]]
+                (router ? 'network).mapTo[Iterable[channel_open]]
               case JsonRPCBody(_, _, "beacons", _) =>
                 (router ? 'beacons).mapTo[Iterable[BinaryData]]
+              case JsonRPCBody(_, _, "dot", _) =>
+                (router ? 'dot).mapTo[String]
               case JsonRPCBody(_, _, "addhtlc", JInt(amount) :: JString(rhash) :: JString(nodeId) :: Nil) =>
-                (paymentSpawner ? CreatePayment(amount.toInt, BinaryData(rhash), BinaryData(nodeId), null)).mapTo[ChannelEvent]
+                (paymentSpawner ? payment_request(BinaryData(nodeId), amount.toInt, BinaryData(rhash), null, null)).mapTo[ChannelEvent]
               case JsonRPCBody(_, _, "pay", JString(base64) :: Nil) =>
                 val paymentRequest = lightning.payment_request.parseFrom(Base64.getDecoder().decode(base64))
-                (paymentSpawner ? CreatePayment(paymentRequest.amountMsat.toInt, paymentRequest.hash, paymentRequest.nodeId, paymentRequest.routingTable)).mapTo[ChannelEvent]
+                (paymentSpawner ? paymentRequest).mapTo[ChannelEvent]
               case JsonRPCBody(_, _, "genh", _) =>
                 (paymentHandler ? 'genh).mapTo[BinaryData]
               case JsonRPCBody(_, _, "genpaymentrequest", JInt(amount) :: Nil) =>
                 val future1 = (paymentHandler ? 'genh).mapTo[BinaryData]
-                val future2 = (router ? 'network).mapTo[Seq[channel_desc]]
-                val future3 = for {
+                val future2 = (router ? 'network).mapTo[Seq[channel_open]]
+                val future3 = (router ? 'states).mapTo[Seq[channel_state_update]]
+                val future4 = for {
                   h <- future1
                   channels <- future2
-                } yield lightning.payment_request(Globals.Node.publicKey, amount.toLong, h, lightning.routing_table(channels))
-                future3.map(r => Base64.getEncoder.encodeToString(r.toByteArray))
+                  states <- future3
+                } yield lightning.payment_request(Globals.Node.publicKey, amount.toInt, h, lightning.routing_table(channels), states)
+                future4.map(r => Base64.getEncoder.encodeToString(r.toByteArray))
               case JsonRPCBody(_, _, "findroute", JString(base64) :: Nil) =>
                 val paymentRequest = lightning.payment_request.parseFrom(Base64.getDecoder.decode(base64))
-                (router ? RouteRequest(paymentRequest.nodeId, paymentRequest.routingTable)).mapTo[RouteResponse]
+                (router ? RouteRequest(paymentRequest)).mapTo[RouteResponse]
               case JsonRPCBody(_, _, "sign", JString(channel) :: Nil) =>
                 (register ? SendCommand(channel, CMD_SIGN)).mapTo[ActorRef].map(_ => "ok")
               case JsonRPCBody(_, _, "fulfillhtlc", JString(channel) :: JDouble(id) :: JString(r) :: Nil) =>

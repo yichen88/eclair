@@ -53,7 +53,7 @@ class DialogReceive(primaryStage: Stage, handlers: Handlers) extends Stage() {
   btn.setOnAction(new EventHandler[ActionEvent] {
     override def handle(event: ActionEvent): Unit = {
       Try(textFieldAmountMsat.getText.toLong) match {
-        case Success(amountMsat) => handlers.getPaymentRequest(textFieldAmountMsat.getText.toLong, textAreaPaymentRequest)
+        case Success(amountMsat) => handlers.getPaymentRequest(textFieldAmountMsat.getText.toInt, textAreaPaymentRequest)
         case _ => {}
       }
     }

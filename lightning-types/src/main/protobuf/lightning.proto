@@ -221,40 +221,45 @@ message error {
   optional string problem = 1;
 }
 
-message channel_desc {
-  required sha256_hash channel_id = 1;
-  required bitcoin_pubkey node_a = 2;
-  required bitcoin_pubkey node_b = 3;
-}
-
-message channel_info {
-  required sha256_hash channel_id = 1;
-  required bitcoin_pubkey node = 2;
-  // available amount for payment *from* this node through this channel
-  required uint32 amount_msat = 3;
-  // fee requested to relay payment *to* this channel
-  required uint32 fee_rate = 4;
-}
-
 message routing_table {
-  repeated channel_desc channels = 1;
+  repeated channel_open channels = 1;
 }
 
 message neighbor_hello {
   required routing_table routing_table = 1;
 }
 
+message channel_open {
+  required sha256_hash channel_id = 1;
+  required bitcoin_pubkey node_a = 2;
+  required bitcoin_pubkey node_b = 3;
+}
+
+message channel_close {
+  required sha256_hash channel_id = 1;
+}
+
 message routing_table_update {
-  required channel_desc channel = 1;
-  enum update_type {
-    OPEN = 1;
-    CLOSE = 2;
+  oneof update {
+    channel_open channel_open = 1;
+    channel_close channel_close = 2;
   }
-  required update_type type = 4;
+}
+
+message channel_state_update {
+  required sha256_hash channel_id = 1;
+  // updates are ordered
+  required uint32 sequence = 2;
+  required bitcoin_pubkey node = 3;
+  // available amount for payment *from* this node through this channel
+  required uint32 amount_msat = 4;
+  // fee requested to relay payment *to* this channel
+  required uint32 relay_fee = 5;
 }
 
 message neighbor_update {
-  repeated routing_table_update updates = 1;
+  repeated routing_table_update routing_table_updates = 1;
+  repeated channel_state_update channel_state_updates = 2;
 }
 
 message neighbor_reset {
@@ -262,10 +267,15 @@ message neighbor_reset {
   repeated sha256_hash channels_ids = 1;
 }
 
+message forward {
+  required bitcoin_pubkey to_node = 1;
+  required neighbor_onion onion = 2;
+}
+
 message beacon_req {
   required bitcoin_pubkey origin = 1;
   // so that they can find a route back to me
-  repeated channel_desc channels = 3;
+  repeated channel_open channels = 3;
 }
 
 message beacon_ack {
@@ -273,20 +283,28 @@ message beacon_ack {
   // optional better candidate
   optional bitcoin_pubkey alternative = 2;
   // so that they can find a route to the candidate
-  repeated channel_desc channels = 3;
+  repeated channel_open channels = 3;
 }
 
-message beacon_forward {
-  required bitcoin_pubkey node = 1;
-  required neighbor_onion onion = 2;
+message subscribe {
+  required bitcoin_pubkey origin = 1;
+  // so that they can find a route back to me
+  repeated channel_open channels = 3;
+}
+
+message unsubscribe {
+  required bitcoin_pubkey origin = 1;
 }
 
 message neighbor_onion {
   // Where to next?
   oneof next {
-    beacon_req req = 1;
-    beacon_ack ack = 2;
-    beacon_forward forward = 4;
+    forward forward = 1;
+    beacon_req req = 10;
+    beacon_ack ack = 11;
+    subscribe subscribe = 20;
+    unsubscribe unsubscribe = 21;
+    channel_state_update dynamic_info = 22;
   }
 }
 
@@ -327,8 +345,9 @@ message pkt {
 
 message payment_request {
   required bitcoin_pubkey node_id = 1;
-  required uint64 amount_msat = 2;
-  required sha256_hash hash = 3;
+  required uint32 amount_msat = 2;
+  required sha256_hash r_hash = 3;
   required routing_table routing_table = 4;
+  repeated channel_state_update states = 5;
 }
 

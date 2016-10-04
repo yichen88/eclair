@@ -33,7 +33,8 @@ class MainWindow extends Application {
   menuChannels.getItems.addAll(itemConnect, new SeparatorMenuItem(), itemSend, itemReceive)
   val menuTools = new Menu("Tools")
   val itemDotExport = new MenuItem("Export to dot file")
-  menuTools.getItems.addAll(itemDotExport)
+  val graphDisplay = new MenuItem("Display graph")
+  menuTools.getItems.addAll(itemDotExport, graphDisplay)
 
   menuBar.getMenus().addAll(menuChannels, menuTools)
   root.setTop(menuBar)
@@ -45,8 +46,8 @@ class MainWindow extends Application {
   tabChannels.setContent(vBoxPane)
 
   val tabGraph = new Tab("Graph")
-  val swingNode = new SwingNode()
-  tabGraph.setContent(swingNode)
+  //val swingNode = new SwingNode()
+  //tabGraph.setContent(swingNode)
 
   val paneTab = new TabPane()
   paneTab.getTabs.addAll(tabChannels, tabGraph)
@@ -100,6 +101,11 @@ class MainWindow extends Application {
                 fileChooser.getExtensionFilters.addAll(new ExtensionFilter("DOT File (*.dot)", "*.dot"))
                 val file = fileChooser.showSaveDialog(primaryStage)
                 if (file != null) handlers.exportToDot(file)
+              }
+            })
+            graphDisplay.setOnAction(new EventHandler[ActionEvent] {
+              override def handle(event: ActionEvent): Unit = {
+                handlers.displayDot(primaryStage)
               }
             })
 
