@@ -3,12 +3,8 @@ dist: trusty
 language: scala
 scala:
  - 2.11.8
-before_install:
- - source travis/builddeps.sh
-env:
- - export LD_LIBRARY_PATH=/usr/local/lib
 script:
- - mvn install && cd eclair-node
+ - mvn install 
 jdk:
  - oraclejdk8
 notifications:
