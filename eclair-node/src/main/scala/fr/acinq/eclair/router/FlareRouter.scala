@@ -46,7 +46,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
   }, null, Nil, Nil, Nil, Set(), Map(), Set(), Map(), 0, Map())
 
   def main(graph: MultiGraph, dijkstra: Dijkstra, neighbors: List[Neighbor], routingUpdatesBatch: List[routing_table_update], channelUpdatesBatch: List[channel_state_update], beacons: Set[Beacon], channelStates: Map[ChannelOneEnd, channel_state_update], subscribed: Set[bitcoin_pubkey], subscribers: Map[bitcoin_pubkey, Seq[bitcoin_pubkey]], mysequence: Int, promises: Map[sha256_hash, Promise[Seq[channel_state_update]]]): Receive = {
-    case ChannelChangedState(_, connection, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
+    case ChannelChangedState(channel, connection, theirNodeId, _, NORMAL, d: DATA_NORMAL) if self.path.parent == channel.path.parent.parent =>
       val stateUpdate = commitments2channelState(mysequence, myself, d.commitments)
       val neighbor = Neighbor(theirNodeId, stateUpdate.channelId, connection, Nil)
       val channelOpen = channel_open(neighbor.channel_id, myself, neighbor.node_id)
@@ -296,7 +296,9 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         .sortBy(_._2)
         .map(_._1)
         .take(maxTries)
-      firstTry.map(r => self ! RouteRequestWip(r, s, req, alternate, mergedStates))
+      firstTry.map(r => self ! RouteRequestWip(r, s, req, alternate, mergedStates)).onFailure {
+        case t: Throwable => t.printStackTrace()
+      }
     case RouteRequestWip(result, s, req, alternate, mergedStates) =>
       result match {
         case Some(route) =>
@@ -503,6 +505,9 @@ object FlareRouter {
     neighbors.find(_.node_id == node_id).map(_.connection)
 
   def distance(a: BinaryData, b: BinaryData): BigInt = {
+    if (a.length != b.length) {
+      println("foo")
+    }
     require(a.length == b.length)
     val c = new Array[Byte](a.length)
     for (i <- 0 until a.length) c(i) = ((a.data(i) ^ b.data(i)) & 0xff).toByte

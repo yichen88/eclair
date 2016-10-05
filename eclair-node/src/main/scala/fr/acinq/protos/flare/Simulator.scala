@@ -3,15 +3,21 @@ package fr.acinq.protos.flare
 import java.io.{BufferedOutputStream, File, FileOutputStream, FileWriter}
 import java.math.BigInteger
 
-import akka.actor.{ActorRef, ActorSystem, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, ActorSystem, Props, Stash}
+import akka.io.Tcp.{Received, Write}
 import akka.pattern.ask
 import akka.util.Timeout
-import fr.acinq.bitcoin.{BinaryData, Crypto}
+import fr.acinq.bitcoin.{BinaryData, Crypto, DeterministicWallet, Satoshi}
 import fr.acinq.eclair._
+import fr.acinq.eclair.blockchain.PeerWatcher
 import fr.acinq.eclair.channel._
+import fr.acinq.eclair.crypto.LightningCrypto.KeyPair
+import fr.acinq.eclair.io.AuthHandler
 import fr.acinq.eclair.router.FlareRouter
 import fr.acinq.eclair.router.FlareRouter.{FlareInfo, RouteRequest, RouteResponse}
+import fr.acinq.protos.TestBitcoinClient
 import lightning._
+import lightning.locktime.Locktime.Blocks
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics
 import org.graphstream.graph.implementations.SingleGraph
 import org.graphstream.graph.{Edge, Node}
@@ -123,11 +129,85 @@ object Simulator extends App {
   val indexMap = (0 to maxId).map(i => nodeIds(i) -> i).toMap
 
   val system = ActorSystem("mySystem")
-  val routers = (0 to maxId).map(i => system.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString()))
+  val nodes = (0 to maxId).map(i => system.actorOf(Props(new MyNode(i)), s"node$i"))
+  //val routers = (0 to maxId).map(i => nodes(i).actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString()))
+
+  def keyPair(i: Int) = {
+    val priv = Crypto.sha256(i.toString.getBytes)
+    val pub = Crypto.publicKeyFromPrivateKey(priv :+ 1.toByte)
+    KeyPair(pub = pub, priv = priv)
+  }
+
+  val blockchain = system.actorOf(Props(new PeerWatcher(new TestBitcoinClient()(system), 300)))
+  val paymentHandler = system.settings.config.getString("eclair.payment-handler") match {
+    case "local" => system.actorOf(Props[LocalPaymentHandler], name = "payment-handler")
+    case "noop" => system.actorOf(Props[NoopPaymentHandler], name = "payment-handler")
+  }
+
+  def channelParams(i: Int): OurChannelParams = {
+    val commitPrivKey = Crypto.sha256(i.toString.getBytes) :+ 1.toByte
+    val finalPrivKey = Crypto.sha256(commitPrivKey) :+ 1.toByte
+    val anchorAmount = 100000
+    OurChannelParams(locktime(Blocks(300)), commitPrivKey, finalPrivKey, 1, 10000, Crypto.sha256("alice-seed".getBytes()), Some(Satoshi(anchorAmount)))
+  }
+
+  class MyNode(i: Int) extends Actor with ActorLogging {
+    val router = context.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString())
+
+    override def unhandled(message: Any): Unit = {
+      super.unhandled(message)
+      log.warning(s"unhandled message $message")
+    }
+
+    def receive = {
+      case ('connect, node: ActorRef) =>
+        val pipe = context.actorOf(Props[MyPipe])
+        val auth = context.actorOf(AuthHandler.props(pipe, blockchain, paymentHandler, router, channelParams(i), keyPair(i)))
+        pipe ! auth
+        node ! ('accept, pipe)
+      case ('accept, pipe: ActorRef) =>
+        val auth = context.actorOf(AuthHandler.props(pipe, blockchain, paymentHandler, router, channelParams(i).copy(anchorAmount = None), keyPair(i)))
+        pipe ! auth
+      case t if t == 'tick_reset || t == 'tick_beacons || t == 'info || t == 'dot || t == 'network || t == 'states => router forward t
+      case t: RouteRequest => router forward t
+    }
+  }
+
+  class MyPipe extends Actor with ActorLogging with Stash {
+
+    override def unhandled(message: Any): Unit = {
+      super.unhandled(message)
+      log.warning(s"unhandled message $message")
+    }
+
+    def receive = {
+      case (a: ActorRef, b: ActorRef) =>
+        unstashAll()
+        context become running(a, b)
+      case a: ActorRef => context become waiting(a)
+      case _ => stash()
+    }
+
+    def waiting(a: ActorRef): Receive = {
+      case b: ActorRef =>
+        unstashAll()
+        context become running(a, b)
+      case _ => stash()
+    }
+
+    def running(a: ActorRef, b: ActorRef): Receive = {
+      case akka.io.Tcp.Register(_, _, _) => ()
+      case Write(data, _) if sender == a => b.tell(Received(data), a)
+      case Write(data, _) if sender == b => a.tell(Received(data), b)
+      case msg if sender == a => b forward msg
+      case msg if sender == b => a forward msg
+    }
+  }
 
   def createChannel(a: Int, b: Int): Unit = {
-    routers(a) ! genChannelChangedState(routers(b), nodeIds(b), channelId(nodeIds(a), nodeIds(b)), 1000000000)
-    routers(b) ! genChannelChangedState(routers(a), nodeIds(a), channelId(nodeIds(a), nodeIds(b)), 1000000000)
+    nodes(a) ! ('connect, nodes(b))
+    //    routers(a) ! genChannelChangedState(routers(b), nodeIds(b), channelId(nodeIds(a), nodeIds(b)), 1000000000)
+    //    routers(b) ! genChannelChangedState(routers(a), nodeIds(a), channelId(nodeIds(a), nodeIds(b)), 1000000000)
   }
 
   links.foreach { case (source, targets) => targets.filter(_ > source).foreach(target => createChannel(source, target)) }
@@ -139,14 +219,14 @@ object Simulator extends App {
     println("'c' => continue")
     StdIn.readLine("?") match {
       case "r" =>
-        for (router <- routers) router ! 'tick_reset
+        for (router <- nodes) router ! 'tick_reset
         true
       case "b" =>
-        for (router <- routers) router ! 'tick_beacons
+        for (router <- nodes) router ! 'tick_beacons
         true
       case "i" =>
         implicit val timeout = Timeout(1 minute)
-        val futures = routers.map(router => (router ? 'info).mapTo[FlareInfo])
+        val futures = nodes.map(router => (router ? 'info).mapTo[FlareInfo])
         val results = Await.result(Future.sequence(futures), 30 second)
         val neighborsStats = new SummaryStatistics()
         val knownStats = new SummaryStatistics()
@@ -176,8 +256,8 @@ object Simulator extends App {
   if (save) {
     val futures = (0 to maxId).map(i => {
       val future = for {
-        dot <- (routers(i) ? 'dot).mapTo[BinaryData]
-      } yield printToFile(new File(s"$i.dot"))(writer => writer.write(dot))
+        dot <- (nodes(i) ? 'dot).mapTo[String]
+      } yield printToFile(new File(s"$i.dot"))(writer => writer.write(dot.getBytes))
 
       future.onFailure {
         case t: Throwable =>
@@ -194,11 +274,11 @@ object Simulator extends App {
   for (i <- 0 to maxId) {
     for (j <- Random.shuffle(i + 1 to maxId)) {
       val future = (for {
-        channels <- (routers(j) ? 'network).mapTo[Seq[channel_open]]
-        states <- (routers(j) ? 'states).mapTo[Seq[channel_state_update]]
+        channels <- (nodes(j) ? 'network).mapTo[Seq[channel_open]]
+        states <- (nodes(j) ? 'states).mapTo[Seq[channel_state_update]]
         req = payment_request(nodeIds(j), 1, sha256_hash(1, 2, 3, 4), routing_table(channels), states)
         request = RouteRequest(req)
-        response <- (routers(i) ? request).mapTo[RouteResponse]
+        response <- (nodes(i) ? request).mapTo[RouteResponse]
       } yield {
         success = success + 1
         routeStats.addValue(response.route.size)
@@ -225,10 +305,7 @@ object Simulator extends App {
     if (Scripts.isLess(a, b)) Crypto.sha256(a ++ b) else Crypto.sha256(b ++ a)
   }
 
-  def nodeId(i: Int): BinaryData = {
-    val a = BigInteger.valueOf(i).toByteArray
-    Crypto.sha256(a)
-  }
+  def nodeId(i: Int): bitcoin_pubkey = keyPair(i).pub
 
   def genChannelChangedState(them: ActorRef, theirNodeId: BinaryData, channelId: BinaryData, available_amount: Int): ChannelChangedState =
     ChannelChangedState(null, them, theirNodeId, null, NORMAL, DATA_NORMAL(new Commitments(null, null,

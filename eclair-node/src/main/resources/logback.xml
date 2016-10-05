@@ -8,10 +8,10 @@
         </encoder>
     </appender>
 
-    <logger name="fr.acinq.eclair.channel" level="DEBUG" />
-    <logger name="fr.acinq.eclair.channel.Register" level="DEBUG" />
-    <logger name="fr.acinq.eclair.router.FlareRouter" level="DEBUG" />
-    <logger name="fr.acinq.protos" level="DEBUG" />
+    <logger name="fr.acinq.eclair.channel" level="DEBUG"/>
+    <logger name="fr.acinq.eclair.channel.Register" level="DEBUG"/>
+    <logger name="fr.acinq.eclair.router.FlareRouter" level="INFOi"/>
+    <logger name="fr.acinq.protos" level="DEBUG"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>

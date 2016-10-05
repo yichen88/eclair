@@ -34,7 +34,7 @@ case object IO_NORMAL extends State
 
 // @formatter:on
 
-class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef, our_params: OurChannelParams) extends LoggingFSM[State, Data] with Stash {
+class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef, our_params: OurChannelParams, nodeKeys: KeyPair) extends LoggingFSM[State, Data] with Stash {
 
   val session_key = randomKeyPair()
 
@@ -93,8 +93,8 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
           * session_sig is a valid secp256k1 ECDSA signature encoded as a 32-byte big endian R value, followed by a 32-byte big endian S value.
           * session_sig is the signature of the SHA256 of SHA256 of the receivers node_id, using the secret key corresponding to the sender's node_id.
           */
-        val sig: BinaryData = Crypto.encodeSignature(Crypto.sign(Crypto.hash256(their_session_key), Globals.Node.privateKey))
-        val our_auth = pkt(Auth(lightning.authenticate(Globals.Node.publicKey, bin2signature(sig))))
+        val sig: BinaryData = Crypto.encodeSignature(Crypto.sign(Crypto.hash256(their_session_key), nodeKeys.priv))
+        val our_auth = pkt(Auth(lightning.authenticate(nodeKeys.pub, bin2signature(sig))))
 
         val encryptor = Encryptor(sending_key, 0)
         val decryptor = Decryptor(receiving_key, 0)
@@ -199,6 +199,10 @@ class AuthHandler(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef
 
 object AuthHandler {
 
-  def props(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef, our_params: OurChannelParams) = Props(new AuthHandler(them, blockchain, paymentHandler, router, our_params))
+  def props(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef, our_params: OurChannelParams): Props =
+    props(them, blockchain, paymentHandler, router, our_params, KeyPair(priv = Globals.Node.privateKey, pub = Globals.Node.publicKey))
+
+  def props(them: ActorRef, blockchain: ActorRef, paymentHandler: ActorRef, router: ActorRef, our_params: OurChannelParams, nodeKeys: KeyPair): Props =
+    Props(new AuthHandler(them, blockchain, paymentHandler, router, our_params, nodeKeys))
 
 }
