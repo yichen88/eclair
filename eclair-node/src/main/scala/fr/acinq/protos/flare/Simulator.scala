@@ -13,7 +13,7 @@ import fr.acinq.eclair.blockchain.PeerWatcher
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.LightningCrypto.KeyPair
 import fr.acinq.eclair.io.AuthHandler
-import fr.acinq.eclair.router.FlareRouter
+import fr.acinq.eclair.router.{ChannelSelector, FlareRouter, PaymentManager}
 import fr.acinq.eclair.router.FlareRouter.{FlareInfo, RouteRequest, RouteResponse}
 import fr.acinq.protos.TestBitcoinClient
 import lightning._
@@ -153,6 +153,7 @@ object Simulator extends App {
 
   class MyNode(i: Int) extends Actor with ActorLogging {
     val router = context.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString())
+    val selector = context.actorOf(Props[ChannelSelector])
 
     def receive = {
       case ('connect, node: ActorRef) =>
@@ -163,6 +164,9 @@ object Simulator extends App {
       case ('accept, pipe: ActorRef) =>
         val auth = context.actorOf(AuthHandler.props(pipe, blockchain, paymentHandler, router, channelParams(i).copy(anchorAmount = None), keyPair(i)))
         pipe ! auth
+      case c: payment_request =>
+        val payFsm = context.actorOf(PaymentManager.props(router, selector, 300))
+        payFsm forward c
       case t => router forward t
     }
   }
@@ -269,17 +273,19 @@ object Simulator extends App {
   var success = 0
   var failures = 0
   val routeStats = new SummaryStatistics()
+  val iterationstats = new SummaryStatistics()
   for (i <- 0 to maxId) {
-    for (j <- Random.shuffle(i + 1 to maxId)) {
+    for (j <- Random.shuffle(i + 1 to maxId).filter(_ != i)) {
       val future = (for {
         channels <- (nodes(j) ? 'network).mapTo[Seq[channel_open]]
         states <- (nodes(j) ? 'states).mapTo[Seq[channel_state_update]]
         req = payment_request(nodeIds(j), 1, sha256_hash(1, 2, 3, 4), routing_table(channels), states)
-        request = RouteRequest(req)
+        request = RouteRequest(req, maxIterations = 5)
         response <- (nodes(i) ? request).mapTo[RouteResponse]
       } yield {
         success = success + 1
         routeStats.addValue(response.route.size)
+        iterationstats.addValue(response.iterations)
       })
         .recover {
           case t: Throwable =>
@@ -289,11 +295,11 @@ object Simulator extends App {
             })*/
             failures = failures + 1
         }
-      Await.ready(future, 5 seconds)
+      Await.ready(future, 15 seconds)
       if ((success + failures) % 10 == 0) {
         val successRate = (100 * success) / (success + failures)
         val progress = 100 * i.toDouble / (maxId - 1)
-        println(f"tested=${success + failures} success=$successRate%.2f%% avgLen=${routeStats.getMean}%.2f maxLen=${routeStats.getMax}%.2f varLen=${routeStats.getVariance}%.2f progress=$progress%.2f%%")
+        println(f"tested=${success + failures} success=$successRate%.2f%% avgLen=${routeStats.getMean}%.2f maxLen=${routeStats.getMax}%.2f varLen=${routeStats.getVariance}%.2f avgItr=${iterationstats.getMean}%.2f maxItr=${iterationstats.getMax}%.2f varItr=${iterationstats.getVariance}%.2f progress=$progress%.2f%%")
       }
     }
   }

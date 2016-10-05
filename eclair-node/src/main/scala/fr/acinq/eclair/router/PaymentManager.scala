@@ -48,7 +48,7 @@ class PaymentManager(router: ActorRef, selector: ActorRef, initialBlockCount: Lo
   }
 
   when(WAITING_FOR_ROUTE) {
-    case Event(RouteResponse(r), WaitingForRoute(s, c, currentBlockCount)) =>
+    case Event(RouteResponse(r, iterations), WaitingForRoute(s, c, currentBlockCount)) =>
       selector ! SelectChannelRequest(r.drop(1).head)
       goto(WAITING_FOR_CHANNEL) using WaitingForChannel(s, c, r, currentBlockCount)
 

@@ -284,30 +284,31 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       } else channelStates
       log.debug(s"channel states are now ${states2string(channelStates1)}")
       context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates1, subscribed, subscribers, mysequence, promises)
-    case RouteRequest(req, maxTries) =>
-      log.info(s"received request ${req.rHash} to ${req.nodeId} with maxTries=$maxTries")
+    case RouteRequest(req, maxIterations) =>
+      log.info(s"received request ${req.rHash} to ${req.nodeId} with maxIterations=$maxIterations")
       val s = sender
       val mergedStates = merge(channelStates, req.states)
-      val firstTry = Future(Option(findPaymentRoute(myself, req.nodeId, req.amountMsat, mergedStates.values)))
+      val firstTry = Future(findPaymentRoute(myself, req.nodeId, req.amountMsat, mergedStates.values))
       val alternate = graph.getNodeIterator[MultiNode]
         .toList
         .map(n => node2pubkey(n))
+        .filterNot(_ == myself)
         .map(node => (node, distance(req.nodeId, node)))
         .sortBy(_._2)
         .map(_._1)
-        .take(maxTries)
-      firstTry.map(r => self ! RouteRequestWip(r, s, req, alternate, mergedStates)).onFailure {
+        .take(maxIterations)
+      firstTry.map(r => self ! RouteRequestWip(r, s, req, alternate, mergedStates, 1)).onFailure {
         case t: Throwable => t.printStackTrace()
       }
-    case RouteRequestWip(result, s, req, alternate, mergedStates) =>
+    case RouteRequestWip(result, s, req, alternate, mergedStates, iterations) =>
       result match {
-        case Some(route) =>
-          log.info(s"found route of size ${route.size} for payment request ${req.rHash} to ${req.nodeId}")
-          s ! RouteResponse(route)
+        case _ if result.size > 0 =>
+          log.info(s"found route of size ${result.size} for payment request ${req.rHash} to ${req.nodeId}")
+          s ! RouteResponse(result, iterations)
           context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence, promises - req.rHash)
-        case None if alternate.headOption.isDefined =>
+        case _ if alternate.headOption.isDefined =>
           val node = alternate.head
-          log.info(s"sending route request to alternate ${pubkey2string(node)}")
+          log.info(s"sending route request to alternate ${pubkey2string(node)} iterations=${iterations + 1}")
           // this will hold alternate node's dynamic infos
           // TODO: add timeout
           val promise = Promise[Seq[channel_state_update]]()
@@ -316,11 +317,11 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
           promise.future
             .map(states => {
               val mergedStates1 = merge(mergedStates, states)
-              (mergedStates1, Option(findPaymentRoute(myself, req.nodeId, req.amountMsat, mergedStates1.values)))
+              (mergedStates1, findPaymentRoute(myself, req.nodeId, req.amountMsat, mergedStates1.values))
             })
-            .map(r => self ! RouteRequestWip(r._2, s, req, alternate.drop(1), r._1))
+            .map(r => self ! RouteRequestWip(r._2, s, req, alternate.drop(1), r._1, iterations + 1))
           context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence, promises + (req.rHash -> promise))
-        case None =>
+        case _ =>
           log.info(s"cannot find route for payment request ${req.rHash} to ${req.nodeId}")
           s ! actor.Status.Failure(new RuntimeException("route not found"))
           context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence, promises - req.rHash)
@@ -369,9 +370,9 @@ object FlareRouter {
   case class Beacon(id: bitcoin_pubkey, distance: BigInt, hops: Int)
   case class ChannelOneEnd(channel_id: sha256_hash, node_id: bitcoin_pubkey)
   case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
-  case class RouteRequest(req: payment_request, alternateTries: Int = 0)
-  case class RouteRequestWip(result: Option[Seq[bitcoin_pubkey]], sender: ActorRef, req: payment_request, alternate: Seq[bitcoin_pubkey], wipStates: Map[ChannelOneEnd, channel_state_update])
-  case class RouteResponse(route: Seq[bitcoin_pubkey])
+  case class RouteRequest(req: payment_request, maxIterations: Int = 0)
+  case class RouteRequestWip(result: Seq[bitcoin_pubkey], sender: ActorRef, req: payment_request, alternate: Seq[bitcoin_pubkey], wipStates: Map[ChannelOneEnd, channel_state_update], iterations: Int)
+  case class RouteResponse(route: Seq[bitcoin_pubkey], iterations: Int)
   // @formatter:on
 
   def commitments2channelState(sequence: Int, myself: bitcoin_pubkey, commitments: Commitments): channel_state_update =
@@ -487,6 +488,7 @@ object FlareRouter {
   }
 
   def findRoute(dijkstra: Dijkstra, source: MultiNode, target: MultiNode): (Seq[channel_open], Seq[bitcoin_pubkey]) = {
+    require(source.getId != target.getId, "trying to find route to self")
     // make sure that the precomputed dijkstra was for the same source
     require(dijkstra.getSource[MultiNode] == source)
     // note: dijkstra path are given in reverse orders

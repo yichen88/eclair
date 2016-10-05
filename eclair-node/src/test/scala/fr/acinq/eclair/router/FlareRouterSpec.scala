@@ -110,7 +110,7 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     assert(graph1.vertexSet().contains(nodeIds(3)))
   }*/
 
-  test("basic routing and discovery") {
+  /*test("basic routing and discovery") {
     val radius = 2
     val maxBeacons = 5
     val nodeIds = for (i <- 0 to 6) yield nodeId(i)
@@ -153,7 +153,7 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     for (link <- links) createChannel(link.head, link.last)
     implicit val timeout = Timeout(1 second)
     awaitCond(Await.result(routers(order.head) ? 'beacons, 1 second).asInstanceOf[Set[Beacon]].map(_.id).contains(order.last), 10 seconds)
-  }
+  }*/
 
   test("find directed route") {
     /*

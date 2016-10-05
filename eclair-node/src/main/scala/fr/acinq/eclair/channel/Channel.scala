@@ -667,7 +667,7 @@ class Channel(val them: ActorRef, val blockchain: ActorRef, paymentHandler: Acto
               upstream ! CMD_SIGN
             case Failure(t: Throwable) =>
               // TODO : send "fail route error"
-              log.warning(s"couldn't resolve upstream node, htlc #${add.id} will timeout", t)
+              log.warning(s"couldn't resolve upstream node, htlc #${add.id} will timeout " + t)
           }
       case route_step(amount, Next.End(true)) +: rest =>
         log.info(s"we are the final recipient of htlc #${add.id}")

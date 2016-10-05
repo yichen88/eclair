@@ -27,8 +27,7 @@ class PeerWatcher(client: ExtendedBitcoinClient, blockCount: Long)(implicit ec: 
       watches.collect {
         case w@WatchSpent(channel, txid, outputIndex, minDepth, event)
           if tx.txIn.exists(i => i.outPoint.txid == txid && i.outPoint.index == outputIndex) =>
-          channel ! (BITCOIN_ANCHOR_SPENT, tx)
-          self ! ('remove, w)
+          self ! ('fire, w, tx)
         case _ => {}
       }
 
@@ -40,8 +39,7 @@ class PeerWatcher(client: ExtendedBitcoinClient, blockCount: Long)(implicit ec: 
           client.getTxConfirmations(txId.toString).map(_ match {
             case Some(confirmations) if confirmations >= minDepth =>
               log.info(s"triggering $w")
-              channel ! event
-              self ! ('remove, w)
+              self ! ('fire, w)
             case _ => {} // not enough confirmations
           })
       }
@@ -59,7 +57,12 @@ class PeerWatcher(client: ExtendedBitcoinClient, blockCount: Long)(implicit ec: 
       context.watch(w.channel)
       context.become(watching(watches + w, block2tx, currentBlockCount))
 
-    case ('remove, w: Watch) if watches.contains(w) =>
+    case ('fire, w: WatchSpent, tx: Transaction) if watches.contains(w) =>
+      w.channel ! (BITCOIN_ANCHOR_SPENT, tx)
+      context.become(watching(watches - w, block2tx, currentBlockCount))
+
+    case ('fire, w: WatchConfirmed) if watches.contains(w) =>
+      w.channel ! w.event
       context.become(watching(watches - w, block2tx, currentBlockCount))
 
     case Publish(tx) =>
