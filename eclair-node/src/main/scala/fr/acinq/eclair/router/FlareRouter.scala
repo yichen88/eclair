@@ -46,7 +46,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
   }, null, Nil, Nil, Nil, Set(), Map(), Set(), Map(), 0, Map())
 
   def main(graph: MultiGraph, dijkstra: Dijkstra, neighbors: List[Neighbor], routingUpdatesBatch: List[routing_table_update], channelUpdatesBatch: List[channel_state_update], beacons: Set[Beacon], channelStates: Map[ChannelOneEnd, channel_state_update], subscribed: Set[bitcoin_pubkey], subscribers: Map[bitcoin_pubkey, Seq[bitcoin_pubkey]], mysequence: Int, promises: Map[sha256_hash, Promise[Seq[channel_state_update]]]): Receive = {
-    case ChannelChangedState(channel, connection, theirNodeId, _, NORMAL, d: DATA_NORMAL) if self.path.parent == channel.path.parent.parent =>
+    case ChannelChangedState(channel, connection, theirNodeId, _, NORMAL, d: DATA_NORMAL) if channel == null || self.path.parent == channel.path.parent.parent || self.path.parent == channel.path.parent.parent.parent =>
       val stateUpdate = commitments2channelState(mysequence, myself, d.commitments)
       val neighbor = Neighbor(theirNodeId, stateUpdate.channelId, connection, Nil)
       val channelOpen = channel_open(neighbor.channel_id, myself, neighbor.node_id)
@@ -58,7 +58,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       log.debug(s"channel states are now ${states2string(channelStates1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
       context become main(graph1, dijkstra1, neighbors :+ neighbor, routingUpdatesBatch ++ updates1, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1, promises)
-    case ChannelSignatureReceived(channel, commitments) if self.path.parent == channel.path.parent.parent =>
+    case ChannelSignatureReceived(channel, commitments) if channel == null || self.path.parent == channel.path.parent.parent || self.path.parent == channel.path.parent.parent.parent =>
       val stateUpdate = commitments2channelState(mysequence, myself, commitments)
       val channelStates1 = channelStates + (ChannelOneEnd(stateUpdate.channelId, stateUpdate.node) -> stateUpdate)
       log.debug(s"channel states are now ${states2string(channelStates1)}")
