@@ -181,7 +181,7 @@ class FlareRouterSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     assert(path === nodeId("aa") :: nodeId("bb") :: nodeId("ee") :: nodeId("cc") :: nodeId("dd") :: Nil)
   }
 
-  test("display graph") {
+  ignore("display graph") {
     val g = new MultiGraph("test")
     val n01 = g.addNode[MultiNode]("01")
     val n02 = g.addNode[MultiNode]("02")
