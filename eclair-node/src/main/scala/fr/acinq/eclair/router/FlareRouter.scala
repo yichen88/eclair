@@ -58,7 +58,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       log.debug(s"channel states are now ${states2string(channelStates1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
       context become main(graph1, dijkstra1, neighbors :+ neighbor, routingUpdatesBatch ++ updates1, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1, promises)
-    case ChannelSignatureReceived(channel, commitments) =>
+    case ChannelSignatureReceived(channel, commitments) if self.path.parent == channel.path.parent.parent =>
       val stateUpdate = commitments2channelState(mysequence, myself, commitments)
       val channelStates1 = channelStates + (ChannelOneEnd(stateUpdate.channelId, stateUpdate.node) -> stateUpdate)
       log.debug(s"channel states are now ${states2string(channelStates1)}")
@@ -528,14 +528,20 @@ object FlareRouter {
     val nodes = states.map(_.node).toSet
     nodes.foreach(node => g.addNode[MultiNode](pubkey2string(node)))
     // edges for which we have the two ends
-    val edges = states.groupBy(_.channelId).filter(_._2.size == 2).mapValues(_.map(_.node).toList)
+    val edges = states
+      .groupBy(_.channelId)
+      .mapValues {
+        case states if states.size == 1 => (states.head.node, null)
+        case states if states.size == 2 => (states.head.node, states.drop(1).head.node)
+        case states if states.size > 2 => throw new RuntimeException("more than 2 nodes attached to same channel, should never happen!")
+      }
     // let's filter out channels that don't have the required amount available
     // note: +10 % because fees, which are cumulative so need to be conservative
     val states1 = states.filter(_.amountMsat > 1.1 * amountMsat)
     // adding *directed* edges
     states1.collect {
-      case u if edges(u.channelId)(0) != u.node => g.addEdge[Edge](sha2562string(u.channelId) + pubkey2string(u.node), pubkey2string(u.node), pubkey2string(edges(u.channelId)(0)), true)
-      case u if edges(u.channelId)(1) != u.node => g.addEdge[Edge](sha2562string(u.channelId) + pubkey2string(u.node), pubkey2string(u.node), pubkey2string(edges(u.channelId)(1)), true)
+      case u if edges(u.channelId)._1 != u.node => g.addEdge[Edge](sha2562string(u.channelId) + pubkey2string(u.node), pubkey2string(u.node), pubkey2string(edges(u.channelId)._1), true)
+      case u if edges(u.channelId)._2 != null && edges(u.channelId)._2 != u.node => g.addEdge[Edge](sha2562string(u.channelId) + pubkey2string(u.node), pubkey2string(u.node), pubkey2string(edges(u.channelId)._2), true)
     }
     val dijkstra = new Dijkstra()
     dijkstra.init(g)

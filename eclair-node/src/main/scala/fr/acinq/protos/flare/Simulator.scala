@@ -154,11 +154,6 @@ object Simulator extends App {
   class MyNode(i: Int) extends Actor with ActorLogging {
     val router = context.actorOf(Props(new FlareRouter(nodeIds(i), radius, maxBeacons, false)), i.toString())
 
-    override def unhandled(message: Any): Unit = {
-      super.unhandled(message)
-      log.warning(s"unhandled message $message")
-    }
-
     def receive = {
       case ('connect, node: ActorRef) =>
         val pipe = context.actorOf(Props[MyPipe])
@@ -168,8 +163,7 @@ object Simulator extends App {
       case ('accept, pipe: ActorRef) =>
         val auth = context.actorOf(AuthHandler.props(pipe, blockchain, paymentHandler, router, channelParams(i).copy(anchorAmount = None), keyPair(i)))
         pipe ! auth
-      case t if t == 'tick_reset || t == 'tick_beacons || t == 'info || t == 'dot || t == 'network || t == 'states => router forward t
-      case t: RouteRequest => router forward t
+      case t => router forward t
     }
   }
 
@@ -215,6 +209,7 @@ object Simulator extends App {
   def callToAction: Boolean = {
     println("'r' => send tick_reset to all actors")
     println("'b' => send tick_beacons to all actors")
+    println("'s' => send tick_subscribe to all actors")
     println("'i' => get flare_info from all actors")
     println("'c' => continue")
     StdIn.readLine("?") match {
@@ -223,6 +218,9 @@ object Simulator extends App {
         true
       case "b" =>
         for (router <- nodes) router ! 'tick_beacons
+        true
+      case "s" =>
+        for (router <- nodes) router ! 'tick_subscribe
         true
       case "i" =>
         implicit val timeout = Timeout(1 minute)
