@@ -1,10 +1,9 @@
 package fr.acinq.eclair.router
 
-import java.io.{ByteArrayOutputStream, OutputStreamWriter}
 import java.util.UUID
 
+import akka.actor
 import akka.actor.{Actor, ActorLogging, ActorRef}
-import akka.pattern.pipe
 import fr.acinq.bitcoin.BinaryData
 import fr.acinq.eclair._
 import fr.acinq.eclair.channel._
@@ -12,12 +11,12 @@ import lightning._
 import lightning.neighbor_onion.Next._
 import lightning.routing_table_update.Update.{ChannelClose, ChannelOpen}
 import org.graphstream.algorithm.Dijkstra
-import org.graphstream.graph.{Edge, Node}
 import org.graphstream.graph.implementations.{MultiGraph, MultiNode}
+import org.graphstream.graph.{Edge, Node}
 
 import scala.collection.JavaConversions._
-import scala.concurrent.Future
 import scala.concurrent.duration._
+import scala.concurrent.{Future, Promise}
 import scala.util.{Random, Try}
 
 /**
@@ -40,9 +39,13 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
 
   import FlareRouter._
 
-  override def receive: Receive = main(new MultiGraph(UUID.randomUUID().toString), null, Nil, Nil, Nil, Set(), Map(), Set(), Map(), 0)
+  override def receive: Receive = main({
+    val g = new MultiGraph(UUID.randomUUID().toString)
+    g.addNode[MultiNode](pubkey2string(myself))
+    g
+  }, null, Nil, Nil, Nil, Set(), Map(), Set(), Map(), 0, Map())
 
-  def main(graph: MultiGraph, dijkstra: Dijkstra, neighbors: List[Neighbor], routingUpdatesBatch: List[routing_table_update], channelUpdatesBatch: List[channel_state_update], beacons: Set[Beacon], channelStates: Map[ChannelOneEnd, channel_state_update], subscribed: Set[bitcoin_pubkey], subscribers: Map[bitcoin_pubkey, Seq[bitcoin_pubkey]], mysequence: Int): Receive = {
+  def main(graph: MultiGraph, dijkstra: Dijkstra, neighbors: List[Neighbor], routingUpdatesBatch: List[routing_table_update], channelUpdatesBatch: List[channel_state_update], beacons: Set[Beacon], channelStates: Map[ChannelOneEnd, channel_state_update], subscribed: Set[bitcoin_pubkey], subscribers: Map[bitcoin_pubkey, Seq[bitcoin_pubkey]], mysequence: Int, promises: Map[sha256_hash, Promise[Seq[channel_state_update]]]): Receive = {
     case ChannelChangedState(_, connection, theirNodeId, _, NORMAL, d: DATA_NORMAL) =>
       val stateUpdate = commitments2channelState(mysequence, myself, d.commitments)
       val neighbor = Neighbor(theirNodeId, stateUpdate.channelId, connection, Nil)
@@ -54,13 +57,13 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       val channelStates1 = channelStates + (ChannelOneEnd(stateUpdate.channelId, stateUpdate.node) -> stateUpdate)
       log.debug(s"channel states are now ${states2string(channelStates1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
-      context become main(graph1, dijkstra1, neighbors :+ neighbor, routingUpdatesBatch ++ updates1, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1)
+      context become main(graph1, dijkstra1, neighbors :+ neighbor, routingUpdatesBatch ++ updates1, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1, promises)
     case ChannelSignatureReceived(channel, commitments) =>
       val stateUpdate = commitments2channelState(mysequence, myself, commitments)
       val channelStates1 = channelStates + (ChannelOneEnd(stateUpdate.channelId, stateUpdate.node) -> stateUpdate)
       log.debug(s"channel states are now ${states2string(channelStates1)}")
       context.system.scheduler.scheduleOnce(1 second, self, 'tick_updates)
-      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1)
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch :+ stateUpdate, beacons, channelStates1, subscribed, subscribers, mysequence + 1, promises)
     case msg@neighbor_hello(table1) =>
       log.debug(s"received $msg from $sender")
       val (graph1, dijkstra1) = merge(myself, graph, table1, radius, beacons.map(_.id))
@@ -72,7 +75,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         send(route, neighbors, neighbor_onion(Req(beacon_req(myself, channels1))))
       }
       log.debug(s"graph is now ${graph2string(graph1)}")
-      context become main(graph1, dijkstra1, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence)
+      context become main(graph1, dijkstra1, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence, promises)
     case msg@neighbor_update(routingTableUpdates, channelStateUpdates) =>
       log.debug(s"received $msg from $sender")
       // STEP 1: routing table updates
@@ -105,7 +108,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
     }
       log.debug(s"channel states are now ${states2string(channelStates1)}")
       context.system.scheduler.scheduleOnce(3 second, self, 'tick_updates)
-      context become main(graph1, dijkstra1, neighbors, routingUpdatesBatch ++ updates1, channelUpdatesBatch ++ channelStateUpdates1, beacons, channelStates1, subscribed, subscribers, mysequence)
+      context become main(graph1, dijkstra1, neighbors, routingUpdatesBatch ++ updates1, channelUpdatesBatch ++ channelStateUpdates1, beacons, channelStates1, subscribed, subscribers, mysequence, promises)
     case msg@neighbor_reset(channel_ids) =>
       log.debug(s"received neighbor_reset from $sender with ${channel_ids.size} channels")
       val diff = graph2table(graph).channels.filterNot(c => channel_ids.contains(c.channelId)).map(c => routing_table_update(ChannelOpen(c)))
@@ -125,7 +128,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       channelUpdatesBatch
         .map(u => neighbor_onion(DynamicInfo(u)))
         .foreach(msg => subscribers.foreach(suscriber => send(suscriber._2, neighbors, msg)))
-      context become main(graph, dijkstra, neighbors1, Nil, Nil, beacons, channelStates, subscribed, subscribers, mysequence)
+      context become main(graph, dijkstra, neighbors1, Nil, Nil, beacons, channelStates, subscribed, subscribers, mysequence, promises)
     case 'tick_updates => // nothing to do
     case 'tick_reset =>
       val channel_ids = graph2table(graph).channels.map(_.channelId)
@@ -156,7 +159,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
           send(route, neighbors, subscribeMsg)
         })
       }
-      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed1, subscribers, mysequence)
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed1, subscribers, mysequence, promises)
     case msg@neighbor_onion(onion) =>
       (onion: @unchecked) match {
         case lightning.neighbor_onion.Next.Forward(next) =>
@@ -171,6 +174,8 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         case lightning.neighbor_onion.Next.Subscribe(subscribe) => self ! subscribe
         case lightning.neighbor_onion.Next.Unsubscribe(unsubscribe) => self ! unsubscribe
         case lightning.neighbor_onion.Next.DynamicInfo(dynamic_info) => self ! dynamic_info
+        case lightning.neighbor_onion.Next.ChannelStatesRequest(req) => self ! req
+        case lightning.neighbor_onion.Next.ChannelStatesResponse(res) => self ! res
       }
     case msg@beacon_req(origin, channels) =>
       log.debug(s"received beacon_req msg from $origin with channels=${channels2string(channels)}")
@@ -244,7 +249,7 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       val (graph2, _, dijkstra2) = include(myself, graph1, Nil, radius, beacons1.map(_.id))
       log.debug(s"graph is now ${graph2string(graph2)}")
       log.debug(s"my beacons are now ${beacons1.map(b => s"${pubkey2string(b.id).take(6)}(${b.hops})").mkString(",")}")
-      context become main(graph2, dijkstra2, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons1, channelStates, subscribed, subscribers, mysequence)
+      context become main(graph2, dijkstra2, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons1, channelStates, subscribed, subscribers, mysequence, promises)
     case msg@subscribe(origin, channels) =>
       log.debug(s"received register msg from $origin with channels=${channels2string(channels)}")
       // adding routes to my table so that I can reply to the origin
@@ -252,14 +257,16 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
       // TODO : maybe we should allow an even larger radius, because their MAX_BEACON_DISTANCE could be larger than ours
       val (graph1, _, dijkstra1) = include(myself, graph, updates, MAX_BEACON_DISTANCE, Set())
       val (_, route) = findRoute(dijkstra1, getOrAdd(graph1, myself), getOrAdd(graph1, origin))
+      // sending my current states to this new subscriber
+      channelStates.values.filter(_.node == myself).foreach(u => send(route, neighbors, neighbor_onion(DynamicInfo(u))))
       val subscribers1 = subscribers + (origin -> route)
       log.debug(s"subscribers are now ${subscribers2string(subscribers1)}")
-      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers1, mysequence)
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers1, mysequence, promises)
     case msg@unsubscribe(origin) =>
       log.info(s"received unregister msg from $origin")
       val subscribers1 = subscribers - origin
       log.debug(s"subscribers are now ${subscribers2string(subscribers1)}")
-      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers1, mysequence)
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers1, mysequence, promises)
     case msg@channel_state_update(channelId, sequence, node, amountMsat, relayFee) =>
       log.debug(s"received dynamic info from $node for channelId=$channelId")
       val channelStates1 = if (Option(graph.getEdge[Edge](sha2562string(channelId))).isDefined) {
@@ -276,9 +283,55 @@ class FlareRouter(myself: bitcoin_pubkey, radius: Int, beaconCount: Int, ticks: 
         }
       } else channelStates
       log.debug(s"channel states are now ${states2string(channelStates1)}")
-      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates1, subscribed, subscribers, mysequence)
-    case RouteRequest(req) =>
-      Future(findPaymentRoute(myself, req.nodeId, req.amountMsat, merge(channelStates, req.states))).map(RouteResponse(_)) pipeTo sender
+      context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates1, subscribed, subscribers, mysequence, promises)
+    case RouteRequest(req, maxTries) =>
+      log.info(s"received request ${req.rHash} to ${req.nodeId} with maxTries=$maxTries")
+      val s = sender
+      val mergedStates = merge(channelStates, req.states)
+      val firstTry = Future(Option(findPaymentRoute(myself, req.nodeId, req.amountMsat, mergedStates.values)))
+      val alternate = graph.getNodeIterator[MultiNode]
+        .toList
+        .map(n => node2pubkey(n))
+        .map(node => (node, distance(req.nodeId, node)))
+        .sortBy(_._2)
+        .map(_._1)
+        .take(maxTries)
+      firstTry.map(r => self ! RouteRequestWip(r, s, req, alternate, mergedStates))
+    case RouteRequestWip(result, s, req, alternate, mergedStates) =>
+      result match {
+        case Some(route) =>
+          log.info(s"found route of size ${route.size} for payment request ${req.rHash} to ${req.nodeId}")
+          s ! RouteResponse(route)
+          context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence, promises - req.rHash)
+        case None if alternate.headOption.isDefined =>
+          val node = alternate.head
+          log.info(s"sending route request to alternate ${pubkey2string(node)}")
+          // this will hold alternate node's dynamic infos
+          // TODO: add timeout
+          val promise = Promise[Seq[channel_state_update]]()
+          val (channels, route) = findRoute(dijkstra, getOrAdd(graph, myself), getOrAdd(graph, node))
+          send(route, neighbors, neighbor_onion(ChannelStatesRequest(channel_states_request(myself, req.rHash, channels))))
+          promise.future
+            .map(states => {
+              val mergedStates1 = merge(mergedStates, states)
+              (mergedStates1, Option(findPaymentRoute(myself, req.nodeId, req.amountMsat, mergedStates1.values)))
+            })
+            .map(r => self ! RouteRequestWip(r._2, s, req, alternate.drop(1), r._1))
+          context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence, promises + (req.rHash -> promise))
+        case None =>
+          log.info(s"cannot find route for payment request ${req.rHash} to ${req.nodeId}")
+          s ! actor.Status.Failure(new RuntimeException("route not found"))
+          context become main(graph, dijkstra, neighbors, routingUpdatesBatch, channelUpdatesBatch, beacons, channelStates, subscribed, subscribers, mysequence, promises - req.rHash)
+      }
+    case msg@channel_states_request(origin, requestId, channels) =>
+      log.debug(s"received channel_states_request from $origin with requestId=$requestId")
+      val updates = channels.map(channel => routing_table_update(ChannelOpen(channel))).toList
+      val (graph1, _, dijkstra1) = include(myself, graph, updates, MAX_BEACON_DISTANCE, Set())
+      val (_, route) = findRoute(dijkstra1, getOrAdd(graph1, myself), getOrAdd(graph1, origin))
+      send(route, neighbors, neighbor_onion(ChannelStatesResponse(channel_states_response(myself, requestId, channelStates.values.toSeq))))
+    case msg@channel_states_response(origin, requestId, states) =>
+      log.debug(s"received channel_states_response from $origin with requestId=$requestId")
+      promises.get(requestId).map(p => p.success(states))
     case 'network =>
       sender ! graph2table(graph).channels
     case 'states =>
@@ -314,7 +367,8 @@ object FlareRouter {
   case class Beacon(id: bitcoin_pubkey, distance: BigInt, hops: Int)
   case class ChannelOneEnd(channel_id: sha256_hash, node_id: bitcoin_pubkey)
   case class FlareInfo(neighbors: Int, known_nodes: Int, beacons: Set[Beacon])
-  case class RouteRequest(req: payment_request)
+  case class RouteRequest(req: payment_request, alternateTries: Int = 0)
+  case class RouteRequestWip(result: Option[Seq[bitcoin_pubkey]], sender: ActorRef, req: payment_request, alternate: Seq[bitcoin_pubkey], wipStates: Map[ChannelOneEnd, channel_state_update])
   case class RouteResponse(route: Seq[bitcoin_pubkey])
   // @formatter:on
 
@@ -366,15 +420,15 @@ object FlareRouter {
           s""" "${pubkey2string(tgt.node_id)}" -> "${pubkey2string(src.node_id)}" [fontsize=8 labeltooltip="${edge.getId}" label=${tgtAvail.getOrElse("unknown")}];""" :: Nil
       }).mkString("\n")
 
-      s"""digraph G {
-          |rankdir=LR;
-          |$nodes
-          |$centerColor
-          |$beaconsColor
-          |$edges
-          |}
+    s"""digraph G {
+        |rankdir=LR;
+        |$nodes
+        |$centerColor
+        |$beaconsColor
+        |$edges
+        |}
     """.stripMargin
-   }
+  }
 
   def copy(graph: MultiGraph): MultiGraph = {
     val g1 = new MultiGraph(UUID.randomUUID().toString)
@@ -455,12 +509,12 @@ object FlareRouter {
     BigInt(1, c)
   }
 
-  def merge(states1: Map[ChannelOneEnd, channel_state_update], states2: Seq[channel_state_update]): Iterable[channel_state_update] = {
+  def merge(states1: Map[ChannelOneEnd, channel_state_update], states2: Seq[channel_state_update]): Map[ChannelOneEnd, channel_state_update] = {
     states2.foldLeft(states1) {
       case (m, u) if !m.containsKey(ChannelOneEnd(u.channelId, u.node)) => m + (ChannelOneEnd(u.channelId, u.node) -> u)
       case (m, u) if m(ChannelOneEnd(u.channelId, u.node)).sequence < u.sequence => m + (ChannelOneEnd(u.channelId, u.node) -> u)
       case (m, _) => m
-    }.values
+    }
   }
 
   def findPaymentRoute(source: bitcoin_pubkey, target: bitcoin_pubkey, amountMsat: Int, states: Iterable[channel_state_update]): Seq[bitcoin_pubkey] = {

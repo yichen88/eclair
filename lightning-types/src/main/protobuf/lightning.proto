@@ -296,6 +296,19 @@ message unsubscribe {
   required bitcoin_pubkey origin = 1;
 }
 
+message channel_states_request {
+  required bitcoin_pubkey origin = 1;
+  required sha256_hash request_id = 2;
+  // so that they can find a route back to me
+  repeated channel_open channels = 3;
+}
+
+message channel_states_response {
+  required bitcoin_pubkey origin = 1;
+  required sha256_hash request_id = 2;
+  repeated channel_state_update states = 3;
+}
+
 message neighbor_onion {
   // Where to next?
   oneof next {
@@ -305,6 +318,8 @@ message neighbor_onion {
     subscribe subscribe = 20;
     unsubscribe unsubscribe = 21;
     channel_state_update dynamic_info = 22;
+    channel_states_request channel_states_request = 30;
+    channel_states_response channel_states_response = 31;
   }
 }
 
