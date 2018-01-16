@@ -16,7 +16,7 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
     statement.execute("PRAGMA foreign_keys = ON")
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS nodes (node_id BLOB NOT NULL PRIMARY KEY, data BLOB NOT NULL)")
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS channels (short_channel_id INTEGER NOT NULL PRIMARY KEY, node_id_1 data BLOB NOT NULL, node_id_2 data BLOB NOT NULL)")
-    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channel_updates (short_channel_id INTEGER NOT NULL, node_flag INTEGER NOT NULL, timestamp_ INTEGER NOT NULL, flags BLOB NOT NULL, cltv_expiry_delta INTEGER NOT NULL, htlc_minimum_msat INTEGER NOT NULL, fee_base_msat INTEGER NOT NULL, fee_proportional_millionths INTEGER NOT NULL, PRIMARY KEY(short_channel_id, node_flag), FOREIGN KEY(short_channel_id) REFERENCES channels(short_channel_id))")
+    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channel_updates (short_channel_id INTEGER NOT NULL, node_flag INTEGER NOT NULL, timestamp INTEGER NOT NULL, flags BLOB NOT NULL, cltv_expiry_delta INTEGER NOT NULL, htlc_minimum_msat INTEGER NOT NULL, fee_base_msat INTEGER NOT NULL, fee_proportional_millionths INTEGER NOT NULL, PRIMARY KEY(short_channel_id, node_flag), FOREIGN KEY(short_channel_id) REFERENCES channels(short_channel_id))")
     statement.executeUpdate("CREATE INDEX IF NOT EXISTS channel_updates_idx ON channel_updates(short_channel_id)")
   }
 
@@ -105,7 +105,7 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
   }
 
   override def updateChannelUpdate(u: ChannelUpdate): Unit = {
-    using(sqlite.prepareStatement("UPDATE channel_updates SET timestamp_=?, flags=?, cltv_expiry_delta=?, htlc_minimum_msat=?, fee_base_msat=?, fee_proportional_millionths=? WHERE short_channel_id=? AND node_flag=?")) { statement =>
+    using(sqlite.prepareStatement("UPDATE channel_updates SET timestamp=?, flags=?, cltv_expiry_delta=?, htlc_minimum_msat=?, fee_base_msat=?, fee_proportional_millionths=? WHERE short_channel_id=? AND node_flag=?")) { statement =>
       statement.setLong(1, u.timestamp)
       statement.setBytes(2, u.flags)
       statement.setInt(3, u.cltvExpiryDelta)
@@ -127,7 +127,7 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
           signature = null,
           chainHash = null,
           shortChannelId = rs.getLong("short_channel_id"),
-          timestamp = rs.getLong("timestamp_"),
+          timestamp = rs.getLong("timestamp"),
           flags = rs.getBytes("flags"),
           cltvExpiryDelta = rs.getInt("cltv_expiry_delta"),
           htlcMinimumMsat = rs.getLong("htlc_minimum_msat"),
