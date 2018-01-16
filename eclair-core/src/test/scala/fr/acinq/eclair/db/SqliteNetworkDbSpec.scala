@@ -76,7 +76,7 @@ class SqliteNetworkDbSpec extends FunSuite {
     db.addChannelUpdate(channel_update_3)
     db.removeChannel(channel_3.shortChannelId)
     assert(db.listChannels().size === 1)
-    assert(db.listChannelUpdates().toSet === Set(channel_update_1))
+    assert(db.listChannelUpdates().size === 1)
     db.updateChannelUpdate(channel_update_1)
   }
 
