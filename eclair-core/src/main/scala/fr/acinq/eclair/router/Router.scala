@@ -24,7 +24,7 @@ import scala.util.{Random, Success, Try}
 
 // @formatter:off
 
-case class ChannelDesc(id: Long, a: PublicKey, b: PublicKey)
+case class ChannelDesc(id: Long, a: BinaryData, b: BinaryData)
 case class Hop(nodeId: PublicKey, nextNodeId: PublicKey, lastUpdate: ChannelUpdate)
 case class RouteRequest(source: PublicKey, target: PublicKey, assistedRoutes: Seq[Seq[ExtraHop]] = Nil, ignoreNodes: Set[PublicKey] = Set.empty, ignoreChannels: Set[Long] = Set.empty)
 case class RouteResponse(hops: Seq[Hop], ignoreNodes: Set[PublicKey], ignoreChannels: Set[Long]) { require(hops.size > 0, "route cannot be empty") }
@@ -80,8 +80,11 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
   {
     log.info(s"loading network announcements from db...")
     // On Android, we discard the node announcements
+    log.info(s"reading channels...")
     val channels = db.listChannels()
+    log.info(s"reading updates...")
     val updates = db.listChannelUpdates()
+    log.info(s"filtering stale channels...")
     val staleChannels = getStaleChannels(channels, updates)
     if (staleChannels.size > 0) {
       log.info(s"dropping ${staleChannels.size} stale channels pre-validation")
@@ -262,7 +265,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
         if (d.updates.contains(desc) && d.updates(desc).timestamp >= u.timestamp) {
           log.debug("ignoring {} (old timestamp or duplicate)", u)
           stay
-        } else if (!Announcements.checkSig(u, desc.a)) {
+        } else if (!Announcements.checkSig(u, PublicKey(desc.a))) {
           log.warning(s"bad signature for announcement shortChannelId=${u.shortChannelId.toHexString} {}", u)
           sender ! Error(Peer.CHANNELID_ZERO, "bad announcement sig!!!".getBytes())
           stay
@@ -287,7 +290,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
         if (d.updates.contains(desc) && d.updates(desc).timestamp >= u.timestamp) {
           log.debug("ignoring {} (old timestamp or duplicate)", u)
           stay
-        } else if (!Announcements.checkSig(u, desc.a)) {
+        } else if (!Announcements.checkSig(u, PublicKey(desc.a))) {
           log.warning(s"bad signature for announcement shortChannelId=${u.shortChannelId.toHexString} {}", u)
           sender ! Error(Peer.CHANNELID_ZERO, "bad announcement sig!!!".getBytes())
           stay
@@ -311,7 +314,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
       log.info(s"funding tx of channelId=${shortChannelId.toHexString} has been spent")
       // we need to remove nodes that aren't tied to any channels anymore
       val channels1 = d.channels - lostChannel.shortChannelId
-      val lostNodes = Seq(lostChannel.nodeId1, lostChannel.nodeId2).filterNot(nodeId => hasChannels(nodeId, channels1.values))
+      val lostNodes = Seq(lostChannel.nodeId1, lostChannel.nodeId2).filterNot(nodeId => hasChannels(nodeId, channels1.values)).map(PublicKey(_))
       // let's clean the db and send the events
       log.info(s"pruning shortChannelId=${shortChannelId.toHexString} (spent)")
       db.removeChannel(shortChannelId) // NB: this also removes channel updates
@@ -452,9 +455,9 @@ object Router {
     if (Announcements.isNode1(u.flags)) ChannelDesc(u.shortChannelId, channel.nodeId1, channel.nodeId2) else ChannelDesc(u.shortChannelId, channel.nodeId2, channel.nodeId1)
   }
 
-  def isRelatedTo(c: ChannelAnnouncement, nodeId: PublicKey) = nodeId == c.nodeId1 || nodeId == c.nodeId2
+  def isRelatedTo(c: ChannelAnnouncement, nodeId: BinaryData) = nodeId == c.nodeId1 || nodeId == c.nodeId2
 
-  def hasChannels(nodeId: PublicKey, channels: Iterable[ChannelAnnouncement]): Boolean = channels.exists(c => isRelatedTo(c, nodeId))
+  def hasChannels(nodeId: BinaryData, channels: Iterable[ChannelAnnouncement]): Boolean = channels.exists(c => isRelatedTo(c, PublicKey(nodeId)))
 
   /**
     * Is stale a channel that:
@@ -490,13 +493,13 @@ object Router {
   def findRouteDijkstra(localNodeId: PublicKey, targetNodeId: PublicKey, channels: Iterable[ChannelDesc]): Seq[ChannelDesc] = {
     if (localNodeId == targetNodeId) throw CannotRouteToSelf
     case class DescEdge(desc: ChannelDesc) extends DefaultEdge
-    val g = new DefaultDirectedGraph[PublicKey, DescEdge](classOf[DescEdge])
+    val g = new DefaultDirectedGraph[BinaryData, DescEdge](classOf[DescEdge])
     Random.shuffle(channels).foreach(d => {
       g.addVertex(d.a)
       g.addVertex(d.b)
       g.addEdge(d.a, d.b, new DescEdge(d))
     })
-    Try(Option(DijkstraShortestPath.findPathBetween(g, localNodeId, targetNodeId))) match {
+    Try(Option(DijkstraShortestPath.findPathBetween(g, localNodeId.toBin, targetNodeId.toBin))) match {
       case Success(Some(path)) => path.map(_.desc)
       case _ => throw RouteNotFound
     }
@@ -504,7 +507,7 @@ object Router {
 
   def findRoute(localNodeId: PublicKey, targetNodeId: PublicKey, updates: Map[ChannelDesc, ChannelUpdate])(implicit ec: ExecutionContext): Future[Seq[Hop]] = Future {
     findRouteDijkstra(localNodeId, targetNodeId, updates.keys)
-      .map(desc => Hop(desc.a, desc.b, updates(desc)))
+      .map(desc => Hop(PublicKey(desc.a), PublicKey(desc.b), updates(desc)))
   }
 
   def graph2dot(nodes: Map[PublicKey, NodeAnnouncement], channels: Map[Long, ChannelAnnouncement])(implicit ec: ExecutionContext): Future[String] = ???

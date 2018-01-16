@@ -131,8 +131,8 @@ case class ChannelAnnouncement(nodeSignature1: BinaryData,
                                features: BinaryData,
                                chainHash: BinaryData,
                                shortChannelId: Long,
-                               nodeId1: PublicKey,
-                               nodeId2: PublicKey,
+                               nodeId1: BinaryData,
+                               nodeId2: BinaryData,
                                bitcoinKey1: PublicKey,
                                bitcoinKey2: PublicKey) extends RoutingMessage
 

@@ -18,7 +18,7 @@ import scala.compat.Platform
 object Announcements {
 
   def channelAnnouncementWitnessEncode(chainHash: BinaryData, shortChannelId: Long, nodeId1: PublicKey, nodeId2: PublicKey, bitcoinKey1: PublicKey, bitcoinKey2: PublicKey, features: BinaryData): BinaryData =
-    sha256(sha256(serializationResult(LightningMessageCodecs.channelAnnouncementWitnessCodec.encode(features :: chainHash :: shortChannelId :: nodeId1 :: nodeId2 :: bitcoinKey1 :: bitcoinKey2 :: HNil))))
+    sha256(sha256(serializationResult(LightningMessageCodecs.channelAnnouncementWitnessCodec.encode(features :: chainHash :: shortChannelId :: nodeId1.toBin :: nodeId2.toBin :: bitcoinKey1 :: bitcoinKey2 :: HNil))))
 
   def nodeAnnouncementWitnessEncode(timestamp: Long, nodeId: PublicKey, rgbColor: Color, alias: String, features: BinaryData, addresses: List[InetSocketAddress]): BinaryData =
     sha256(sha256(serializationResult(LightningMessageCodecs.nodeAnnouncementWitnessCodec.encode(features :: timestamp :: nodeId :: (rgbColor) :: alias :: addresses :: HNil))))
@@ -122,9 +122,9 @@ object Announcements {
   }
 
   def checkSigs(ann: ChannelAnnouncement): Boolean = {
-    val witness = channelAnnouncementWitnessEncode(ann.chainHash, ann.shortChannelId, ann.nodeId1, ann.nodeId2, ann.bitcoinKey1, ann.bitcoinKey2, ann.features)
-    verifySignature(witness, ann.nodeSignature1, ann.nodeId1) &&
-      verifySignature(witness, ann.nodeSignature2, ann.nodeId2) &&
+    val witness = channelAnnouncementWitnessEncode(ann.chainHash, ann.shortChannelId, PublicKey(ann.nodeId1), PublicKey(ann.nodeId2), ann.bitcoinKey1, ann.bitcoinKey2, ann.features)
+    verifySignature(witness, ann.nodeSignature1, PublicKey(ann.nodeId1)) &&
+      verifySignature(witness, ann.nodeSignature2, PublicKey(ann.nodeId2)) &&
       verifySignature(witness, ann.bitcoinSignature1, ann.bitcoinKey1) &&
       verifySignature(witness, ann.bitcoinSignature2, ann.bitcoinKey2)
   }

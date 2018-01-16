@@ -226,8 +226,8 @@ object LightningMessageCodecs {
     ("features" | varsizebinarydata) ::
       ("chainHash" | binarydata(32)) ::
       ("shortChannelId" | int64) ::
-      ("nodeId1" | publicKey) ::
-      ("nodeId2" | publicKey) ::
+      ("nodeId1" | binarydata(33)) ::
+      ("nodeId2" | binarydata(33)) ::
       ("bitcoinKey1" | publicKey) ::
       ("bitcoinKey2" | publicKey))
 

@@ -2,11 +2,13 @@ package fr.acinq.eclair.db.sqlite
 
 import java.sql.Connection
 
-import fr.acinq.bitcoin.Crypto
+import fr.acinq.bitcoin.Crypto.PublicKey
+import fr.acinq.bitcoin.{BinaryData, Crypto}
 import fr.acinq.eclair.db.NetworkDb
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.wire.LightningMessageCodecs.{channelAnnouncementCodec, channelUpdateCodec, nodeAnnouncementCodec}
 import fr.acinq.eclair.wire.{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement}
+import scodec.bits.BitVector
 
 class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
 
@@ -15,7 +17,7 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
   using(sqlite.createStatement()) { statement =>
     statement.execute("PRAGMA foreign_keys = ON")
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS nodes (node_id BLOB NOT NULL PRIMARY KEY, data BLOB NOT NULL)")
-    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channels (short_channel_id INTEGER NOT NULL PRIMARY KEY, data BLOB NOT NULL)")
+    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channels (short_channel_id INTEGER NOT NULL PRIMARY KEY, node_id_1 data BLOB NOT NULL, node_id_2 data BLOB NOT NULL)")
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS channel_updates (short_channel_id INTEGER NOT NULL, node_flag INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(short_channel_id, node_flag), FOREIGN KEY(short_channel_id) REFERENCES channels(short_channel_id))")
     statement.executeUpdate("CREATE INDEX IF NOT EXISTS channel_updates_idx ON channel_updates(short_channel_id)")
   }
@@ -51,9 +53,10 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
   }
 
   override def addChannel(c: ChannelAnnouncement): Unit = {
-    using(sqlite.prepareStatement("INSERT OR IGNORE INTO channels VALUES (?, ?)")) { statement =>
+    using(sqlite.prepareStatement("INSERT OR IGNORE INTO channels VALUES (?, ?, ?)")) { statement =>
       statement.setLong(1, c.shortChannelId)
-      statement.setBytes(2, channelAnnouncementCodec.encode(c).require.toByteArray)
+      statement.setBytes(2, c.nodeId1.data.toArray)
+      statement.setBytes(3, c.nodeId2.data.toArray)
       statement.executeUpdate()
     }
   }
@@ -69,8 +72,23 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
 
   override def listChannels(): List[ChannelAnnouncement] = {
     using(sqlite.createStatement()) { statement =>
-      val rs = statement.executeQuery("SELECT data FROM channels")
-      codecList(rs, channelAnnouncementCodec)
+      val rs = statement.executeQuery("SELECT * FROM channels")
+      var l: List[ChannelAnnouncement] = Nil
+      while (rs.next()) {
+        l = l :+ ChannelAnnouncement(
+          nodeSignature1 = null,
+          nodeSignature2 = null,
+          bitcoinSignature1 = null,
+          bitcoinSignature2 = null,
+          features = null,
+          chainHash = null,
+          shortChannelId = rs.getLong("short_channel_id"),
+          nodeId1 = rs.getBytes("node_id_1"),
+          nodeId2 = rs.getBytes("node_id_2"),
+          bitcoinKey1 = null,
+          bitcoinKey2 = null)
+      }
+      l
     }
   }
 
