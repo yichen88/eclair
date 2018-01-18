@@ -407,7 +407,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
       // we then filter out the currently excluded channels
       val updates2 = updates1.filterKeys(!d.excludedChannels.contains(_))
       // we also filter out disabled channels, and channels/nodes that are blacklisted for this particular request
-      val updates3 = filterUpdates(updates2, ignoreNodes, ignoreChannels)
+      val updates3 = filterUpdates(start, updates2, ignoreNodes, ignoreChannels)
       log.info(s"finding a route $start->$end with ignoreNodes=${ignoreNodes.map(_.toBin).mkString(",")} ignoreChannels=${ignoreChannels.map(_.toHexString).mkString(",")}")
       findRoute(start, end, updates3).map(r => RouteResponse(r, ignoreNodes, ignoreChannels)) pipeTo sender
       // On Android, we don't monitor channels to see if their funding is spent because it is too expensive
@@ -494,11 +494,11 @@ object Router {
   /**
     * This method is used after a payment failed, and we want to exclude some nodes/channels that we know are failing
     */
-  def filterUpdates(updates: Map[ChannelDesc, ChannelUpdate], ignoreNodes: Set[PublicKey], ignoreChannels: Set[Long]) =
+  def filterUpdates(localNode: BinaryData, updates: Map[ChannelDesc, ChannelUpdate], ignoreNodes: Set[PublicKey], ignoreChannels: Set[Long]) =
     updates
       .filterNot(u => ignoreNodes.map(_.toBin).contains(u._1.a) || ignoreNodes.map(_.toBin).contains(u._1.b))
       .filterNot(u => ignoreChannels.contains(u._1.id))
-      .filter(u => Announcements.isEnabled(u._2.flags))
+      .filter(u => Announcements.isEnabled(u._2.flags) || u._1.a == localNode || u._1.b == localNode)
 
   def findRouteDijkstra(localNodeId: PublicKey, targetNodeId: PublicKey, channels: Iterable[ChannelDesc]): Seq[ChannelDesc] = {
     if (localNodeId == targetNodeId) throw CannotRouteToSelf
