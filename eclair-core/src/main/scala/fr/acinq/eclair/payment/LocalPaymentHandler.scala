@@ -2,7 +2,7 @@ package fr.acinq.eclair.payment
 
 import akka.actor.{Actor, ActorLogging, Props, Status}
 import fr.acinq.bitcoin.{BinaryData, Crypto, MilliSatoshi}
-import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FULFILL_HTLC, Channel}
+import fr.acinq.eclair.channel.{CMD_FAIL_HTLC, CMD_FULFILL_HTLC, Channel, UpdateAddHtlcWithProof}
 import fr.acinq.eclair.db.Payment
 import fr.acinq.eclair.wire._
 
@@ -49,7 +49,9 @@ class LocalPaymentHandler(nodeParams: NodeParams)(implicit ec: ExecutionContext 
         case _ => sender ! false
       }
 
-    case htlc: UpdateAddHtlc =>
+    case htlc: UpdateAddHtlc => self forward UpdateAddHtlcWithProof(htlc, None)
+
+    case htlc: UpdateAddHtlcWithProof =>
       hash2preimage.get(htlc.paymentHash) match {
         case Some((paymentPreimage, paymentRequest)) =>
           val minFinalExpiry = Globals.blockCount.get() + paymentRequest.minFinalCltvExpiry.getOrElse(Channel.MIN_CLTV_EXPIRY)

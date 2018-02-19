@@ -384,7 +384,7 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     val paymentSender = TestProbe()
     paymentSender.send(nodes("A").paymentInitiator, paymentReq)
     // F gets the htlc
-    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlc]
+    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlcWithProof]
     // now that we have the channel id, we retrieve channels default final addresses
     sender.send(nodes("C").register, Forward(htlc.channelId, CMD_GETSTATEDATA))
     val finalAddressC = scriptPubKeyToAddress(sender.expectMsgType[DATA_NORMAL].commitments.localParams.defaultFinalScriptPubKey)
@@ -453,7 +453,7 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     val paymentSender = TestProbe()
     paymentSender.send(nodes("A").paymentInitiator, paymentReq)
     // F gets the htlc
-    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlc]
+    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlcWithProof]
     // now that we have the channel id, we retrieve channels default final addresses
     sender.send(nodes("C").register, Forward(htlc.channelId, CMD_GETSTATEDATA))
     val finalAddressC = scriptPubKeyToAddress(sender.expectMsgType[DATA_NORMAL].commitments.localParams.defaultFinalScriptPubKey)
@@ -518,7 +518,7 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     val paymentSender = TestProbe()
     paymentSender.send(nodes("A").paymentInitiator, paymentReq)
     // F gets the htlc
-    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlc]
+    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlcWithProof]
     // now that we have the channel id, we retrieve channels default final addresses
     sender.send(nodes("C").register, Forward(htlc.channelId, CMD_GETSTATEDATA))
     val finalAddressC = scriptPubKeyToAddress(sender.expectMsgType[DATA_NORMAL].commitments.localParams.defaultFinalScriptPubKey)
@@ -570,7 +570,7 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     val paymentSender = TestProbe()
     paymentSender.send(nodes("A").paymentInitiator, paymentReq)
     // F gets the htlc
-    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlc]
+    val htlc = htlcReceiver.expectMsgType[UpdateAddHtlcWithProof]
     // now that we have the channel id, we retrieve channels default final addresses
     sender.send(nodes("C").register, Forward(htlc.channelId, CMD_GETSTATEDATA))
     val finalAddressC = scriptPubKeyToAddress(sender.expectMsgType[DATA_NORMAL].commitments.localParams.defaultFinalScriptPubKey)
