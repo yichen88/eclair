@@ -50,7 +50,7 @@ class LocalKeyManager(seed: BinaryData) extends KeyManager with Logging {
 
   private def htlcSecret(channelNumber: Long) = privateKeys.get(channelKeyPath(channelNumber, 4))
 
-  private def shaSeed(channelNumber: Long) = Crypto.sha256(privateKeys.get(channelKeyPath(channelNumber, 5)).privateKey.toBin)
+  def shaSeed(channelNumber: Long) = Crypto.sha256(privateKeys.get(channelKeyPath(channelNumber, 5)).privateKey.toBin)
 
   override def fundingPublicKey(channelNumber: Long) = publicKeys.get(channelKeyPath(channelNumber, 0))
 
