@@ -2,7 +2,7 @@ package fr.acinq.eclair.channel
 
 import akka.event.LoggingAdapter
 import fr.acinq.bitcoin.Crypto.{Point, PrivateKey, sha256}
-import fr.acinq.bitcoin.{BinaryData, Crypto, Satoshi, Transaction}
+import fr.acinq.bitcoin.{BinaryData, Crypto, DeterministicWallet, Satoshi, Transaction}
 import fr.acinq.eclair.crypto._
 import fr.acinq.eclair.payment.{Local, Origin, Relayed}
 import fr.acinq.eclair.transactions.Transactions._
@@ -23,9 +23,9 @@ case class PublishableTxs(commitTx: CommitTx, htlcTxsAndSigs: List[HtlcTxAndSigs
 case class LocalCommit(index: Long, spec: CommitmentSpec, publishableTxs: PublishableTxs)
 case class RemoteCommit(index: Long, spec: CommitmentSpec, txid: BinaryData, remotePerCommitmentPoint: Point)
 case class WaitingForRevocation(nextRemoteCommit: RemoteCommit, sent: CommitSig, sentAfterLocalCommitIndex: Long, reSignAsap: Boolean = false)
-case class HtlcProof(channelNumber: Long, commitIndex: Long, commitTx: CommitTx, htlcSuccessTx: HtlcSuccessTx, remoteSig: BinaryData, remoteHtlcPoint: Point) {
+case class HtlcProof(channelKeyPath: DeterministicWallet.KeyPath, commitIndex: Long, commitTx: CommitTx, htlcSuccessTx: HtlcSuccessTx, remoteSig: BinaryData, remoteHtlcPoint: Point) {
   def checkProof(keyManager: KeyManager) : Boolean = {
-    val htlcKey = Generators.derivePubKey(remoteHtlcPoint, keyManager.commitmentPoint(channelNumber, commitIndex))
+    val htlcKey = Generators.derivePubKey(remoteHtlcPoint, keyManager.commitmentPoint(channelKeyPath, commitIndex))
     val check = Transactions.checkSig(htlcSuccessTx, remoteSig, htlcKey)
     check
   }
@@ -73,7 +73,7 @@ case class Commitments(localParams: LocalParams, remoteParams: RemoteParams,
 
   def htlcProof(htlc: UpdateAddHtlc): Option[HtlcProof] = {
     val proof = localCommit.publishableTxs.htlcTxsAndSigs.collect {
-      case HtlcTxAndSigs(htx: HtlcSuccessTx, localSig, remoteSig) if htx.htlc == htlc => HtlcProof(localParams.channelNumber, localCommit.index, localCommit.publishableTxs.commitTx, htx, remoteSig, remoteParams.htlcBasepoint)
+      case HtlcTxAndSigs(htx: HtlcSuccessTx, localSig, remoteSig) if htx.htlc == htlc => HtlcProof(localParams.channelKeyPath, localCommit.index, localCommit.publishableTxs.commitTx, htx, remoteSig, remoteParams.htlcBasepoint)
     }
     proof.headOption
   }
@@ -381,7 +381,7 @@ object Commitments {
 
         val sortedHtlcTxs: Seq[TransactionWithInputInfo] = (htlcTimeoutTxs ++ htlcSuccessTxs).sortBy(_.input.outPoint.index)
         val htlcSigs = sortedHtlcTxs.collect {
-          case tx: HtlcTimeoutTx => keyManager.sign(tx, keyManager.htlcPoint(localParams.channelNumber), remoteNextPerCommitmentPoint)
+          case tx: HtlcTimeoutTx => keyManager.sign(tx, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint)
           case tx: HtlcSuccessTx =>
             originChannels(tx.htlc.id) match {
               case _: Local =>

@@ -49,7 +49,8 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
       expiryDeltaBlocks = 144,
       htlcMinimumMsat = 1000,
       minDepthBlocks = 3,
-      delayBlocks = 144,
+      toRemoteDelayBlocks = 144,
+      maxToLocalDelayBlocks = 1000,
       smartfeeNBlocks = 3,
       feeBaseMsat = 546000,
       feeProportionalMillionth = 10,
@@ -134,11 +135,11 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
       val forward = setupAB.relayer.expectMsgType[ForwardAdd]
       val proof = commitmentsUpstream.htlcProof(htlc).get
 
-      val localPerCommitmentPoint = keyManager.commitmentPoint(proof.channelNumber, proof.commitIndex)
+      val localPerCommitmentPoint = keyManager.commitmentPoint(proof.channelKeyPath, proof.commitIndex)
 
       // this is the redeem script for the HTLC we received upstream
       val redeemScript = htlcReceived(
-            Generators.derivePubKey(keyManager.htlcPoint(proof.channelNumber).publicKey, localPerCommitmentPoint),
+            Generators.derivePubKey(keyManager.htlcPoint(proof.channelKeyPath).publicKey, localPerCommitmentPoint),
             Generators.derivePubKey(commitmentsUpstream.remoteParams.htlcBasepoint, localPerCommitmentPoint),
             Generators.revocationPubKey(commitmentsUpstream.remoteParams.revocationBasepoint, localPerCommitmentPoint),
             ripemd160(htlc.paymentHash),
@@ -160,7 +161,7 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
           toLocalDelayed(
             Generators.revocationPubKey(commitmentsUpstream.remoteParams.revocationBasepoint, localPerCommitmentPoint),
             commitmentsUpstream.localParams.toSelfDelay,
-            Generators.derivePubKey(keyManager.delayedPaymentPoint(proof.channelNumber).publicKey, localPerCommitmentPoint)
+            Generators.derivePubKey(keyManager.delayedPaymentPoint(proof.channelKeyPath).publicKey, localPerCommitmentPoint)
           )
         )
       )

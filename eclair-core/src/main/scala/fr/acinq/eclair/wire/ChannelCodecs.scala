@@ -139,7 +139,7 @@ object ChannelCodecs extends Logging {
       ("reSignAsap" | bool)).as[WaitingForRevocation]
 
   val htlcProofCodec: Codec[HtlcProof] = (
-    ("channelNumber" | uint64) ::
+    ("channelKeyPath" | keyPathCodec) ::
       ("commitIndex" | uint64) ::
       ("commitTx" | (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec)).as[CommitTx]) ::
       ("htlcSuccessTx" | (("inputInfo" | inputInfoCodec) :: ("tx" | txCodec) :: ("htlc" | updateAddHtlcCodec)).as[HtlcSuccessTx]) ::
