@@ -31,7 +31,7 @@ import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 
 /**
   * Setup eclair from a datadir.
-  * 
+  *
   * Created by PM on 25/01/2016.
   *
   * @param datadir  directory where eclair-core will write/read its data
@@ -56,7 +56,7 @@ class Setup(datadir: File, overrideDefaults: Config = ConfigFactory.empty(), act
   DBCompatChecker.checkNetworkDBCompatibility(nodeParams)
   PortChecker.checkAvailable(config.getString("server.binding-ip"), config.getInt("server.port"))
 
-  logger.info(s"nodeid=${nodeParams.privateKey.publicKey.toBin} alias=${nodeParams.alias}")
+  logger.info(s"nodeid=${nodeParams.nodeId} alias=${nodeParams.alias}")
   logger.info(s"using chain=$chain chainHash=${nodeParams.chainHash}")
 
   logger.info(s"initializing secure random generator")
@@ -117,8 +117,8 @@ class Setup(datadir: File, overrideDefaults: Config = ConfigFactory.empty(), act
     logger.info(s"initial feeratesPerByte=${Globals.feeratesPerByte.get()}")
     val feeProvider = (chain, bitcoin) match {
       case ("regtest", _) => new ConstantFeeProvider(defaultFeerates)
-      case (_, Bitcoind(bitcoinClient)) => new FallbackFeeProvider(new BitgoFeeProvider() :: new EarnDotComFeeProvider() :: new BitcoinCoreFeeProvider(bitcoinClient, defaultFeerates) :: new ConstantFeeProvider(defaultFeerates) :: Nil) // order matters!
-      case _ => new FallbackFeeProvider(new BitgoFeeProvider() :: new EarnDotComFeeProvider() :: new ConstantFeeProvider(defaultFeerates) :: Nil) // order matters!
+      case (_, Bitcoind(bitcoinClient)) => new FallbackFeeProvider(new BitgoFeeProvider(nodeParams.chainHash) :: new EarnDotComFeeProvider() :: new BitcoinCoreFeeProvider(bitcoinClient, defaultFeerates) :: new ConstantFeeProvider(defaultFeerates) :: Nil) // order matters!
+      case _ => new FallbackFeeProvider(new BitgoFeeProvider(nodeParams.chainHash) :: new EarnDotComFeeProvider() :: new ConstantFeeProvider(defaultFeerates) :: Nil) // order matters!
     }
     system.scheduler.schedule(0 seconds, 10 minutes)(feeProvider.getFeerates.map {
       case feerates: FeeratesPerByte =>
@@ -139,11 +139,9 @@ class Setup(datadir: File, overrideDefaults: Config = ConfigFactory.empty(), act
 
     val wallet = bitcoin match {
       case Bitcoind(bitcoinClient) => new BitcoinCoreWallet(bitcoinClient)
-      case Electrum(electrumClient) => seed_opt match {
-        case Some(seed) => val electrumWallet = system.actorOf(ElectrumWallet.props(seed, electrumClient, ElectrumWallet.WalletParameters(Block.TestnetGenesisBlock.hash)), "electrum-wallet")
-          new ElectrumEclairWallet(electrumWallet)
-        case _ => throw new RuntimeException("electrum wallet requires a seed to set up")
-      }
+      case Electrum(electrumClient) =>
+        val electrumWallet = system.actorOf(ElectrumWallet.props(seed, electrumClient, ElectrumWallet.WalletParameters(Block.TestnetGenesisBlock.hash)), "electrum-wallet")
+        new ElectrumEclairWallet(electrumWallet)
     }
     wallet.getFinalAddress.map {
       case address => logger.info(s"initial wallet address=$address")
@@ -159,7 +157,7 @@ class Setup(datadir: File, overrideDefaults: Config = ConfigFactory.empty(), act
     val authenticator = system.actorOf(SimpleSupervisor.props(Authenticator.props(nodeParams), "authenticator", SupervisorStrategy.Resume))
     val switchboard = system.actorOf(SimpleSupervisor.props(Switchboard.props(nodeParams, authenticator, watcher, router, relayer, wallet), "switchboard", SupervisorStrategy.Resume))
     val server = system.actorOf(SimpleSupervisor.props(Server.props(nodeParams, authenticator, new InetSocketAddress(config.getString("server.binding-ip"), config.getInt("server.port")), Some(tcpBound)), "server", SupervisorStrategy.Restart))
-    val paymentInitiator = system.actorOf(SimpleSupervisor.props(PaymentInitiator.props(nodeParams.privateKey.publicKey, router, register), "payment-initiator", SupervisorStrategy.Restart))
+    val paymentInitiator = system.actorOf(SimpleSupervisor.props(PaymentInitiator.props(nodeParams.nodeId, router, register), "payment-initiator", SupervisorStrategy.Restart))
 
     val kit = Kit(
       nodeParams = nodeParams,
@@ -189,7 +187,7 @@ class Setup(datadir: File, overrideDefaults: Config = ConfigFactory.empty(), act
           }
 
           override def getInfoResponse: Future[GetInfoResponse] = Future.successful(
-            GetInfoResponse(nodeId = nodeParams.privateKey.publicKey,
+            GetInfoResponse(nodeId = nodeParams.nodeId,
               alias = nodeParams.alias,
               port = config.getInt("server.port"),
               chainHash = nodeParams.chainHash,

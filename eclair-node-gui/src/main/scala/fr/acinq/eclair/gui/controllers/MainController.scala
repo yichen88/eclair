@@ -204,7 +204,7 @@ class MainController(val handlers: Handlers, val hostServices: HostServices) ext
       override def onChanged(c: Change[_ <: ChannelInfo]) = updateTabHeader(networkChannelsTab, "All Channels", networkChannelsList)
     })
     networkChannelsIdColumn.setCellValueFactory(new Callback[CellDataFeatures[ChannelInfo, String], ObservableValue[String]]() {
-      def call(pc: CellDataFeatures[ChannelInfo, String]) = new SimpleStringProperty(pc.getValue.announcement.shortChannelId.toHexString)
+      def call(pc: CellDataFeatures[ChannelInfo, String]) = new SimpleStringProperty(pc.getValue.announcement.shortChannelId.toString)
     })
     networkChannelsNode1Column.setCellValueFactory(new Callback[CellDataFeatures[ChannelInfo, String], ObservableValue[String]]() {
       def call(pc: CellDataFeatures[ChannelInfo, String]) = new SimpleStringProperty(pc.getValue.announcement.nodeId1.toString)
@@ -321,7 +321,7 @@ class MainController(val handlers: Handlers, val hostServices: HostServices) ext
 
   def initInfoFields(setup: Setup) = {
     // init status bar
-    labelNodeId.setText(s"${setup.nodeParams.privateKey.publicKey}")
+    labelNodeId.setText(s"${setup.nodeParams.nodeId}")
     labelAlias.setText(s"${setup.nodeParams.alias}")
     rectRGB.setFill(Color.web(setup.nodeParams.color.toString))
     labelApi.setText(s"${setup.config.getInt("api.port")}")
@@ -336,10 +336,10 @@ class MainController(val handlers: Handlers, val hostServices: HostServices) ext
     bitcoinChain.getStyleClass.add(setup.chain)
 
     val nodeURI_opt = setup.nodeParams.publicAddresses.headOption.map(address => {
-      s"${setup.nodeParams.privateKey.publicKey}@${HostAndPort.fromParts(address.getHostString, address.getPort)}"
+      s"${setup.nodeParams.nodeId}@${HostAndPort.fromParts(address.getHostString, address.getPort)}"
     })
 
-    contextMenu = ContextMenuUtils.buildCopyContext(List(CopyAction("Copy Pubkey", setup.nodeParams.privateKey.publicKey.toString())))
+    contextMenu = ContextMenuUtils.buildCopyContext(List(CopyAction("Copy Pubkey", setup.nodeParams.nodeId.toString())))
     nodeURI_opt.map(nodeURI => {
       val nodeInfoAction = new MenuItem("Node Info")
       nodeInfoAction.setOnAction(new EventHandler[ActionEvent] {
@@ -448,7 +448,7 @@ class MainController(val handlers: Handlers, val hostServices: HostServices) ext
     val copyChannelId = new MenuItem("Copy Channel Id")
     copyChannelId.setOnAction(new EventHandler[ActionEvent] {
       override def handle(event: ActionEvent): Unit = Option(row.getItem) match {
-        case Some(pc) => ContextMenuUtils.copyToClipboard(pc.announcement.shortChannelId.toHexString)
+        case Some(pc) => ContextMenuUtils.copyToClipboard(pc.announcement.shortChannelId.toString)
         case None =>
       }
     })

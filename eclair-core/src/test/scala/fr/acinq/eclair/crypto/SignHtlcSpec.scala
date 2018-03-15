@@ -127,7 +127,7 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
       val upd1 = setupAB.relayer.expectMsgType[LocalChannelUpdate]
       val upd2 = setupAB.relayer.expectMsgType[LocalChannelUpdate]
 
-      val channelUpdate = ChannelUpdate(null, null, 0, 0, null, 144, 0, 0, 0)
+      val channelUpdate = ChannelUpdate(null, null, ShortChannelId(0), 0, null, 144, 0, 0, 0)
       val (r, htlc) = addHtlc(50000000, setupAB.alice, setupAB.bob, setupAB.alice2bob, setupAB.bob2alice, Hop(null, Bob.nodeParams.nodeId, null) :: Hop(Bob.nodeParams.nodeId, Charlie.nodeParams.nodeId, channelUpdate) :: Nil)
       crossSign(setupAB.alice, setupAB.bob, setupAB.alice2bob, setupAB.bob2alice)
       val commitmentsUpstream = setupAB.bob.stateData.asInstanceOf[DATA_NORMAL].commitments

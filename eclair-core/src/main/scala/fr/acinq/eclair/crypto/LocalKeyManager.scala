@@ -4,15 +4,19 @@ import com.google.common.cache.{CacheBuilder, CacheLoader, LoadingCache}
 import fr.acinq.bitcoin.Crypto.{Point, PublicKey, Scalar}
 import fr.acinq.bitcoin.DeterministicWallet.{derivePrivateKey, _}
 import fr.acinq.bitcoin.{BinaryData, Crypto, DeterministicWallet}
+import fr.acinq.eclair.ShortChannelId
 import fr.acinq.eclair.channel.HtlcProof
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.transactions.Transactions
 import fr.acinq.eclair.transactions.Transactions.TransactionWithInputInfo
-import grizzled.slf4j.Logging
 
 object LocalKeyManager {
-  val channelKeyBasePath = DeterministicWallet.hardened(46) :: DeterministicWallet.hardened(0) :: Nil
-  val nodeKeyBasePath = DeterministicWallet.hardened(46) :: DeterministicWallet.hardened(1) :: Nil
+  val channelKeyBasePath = DeterministicWallet.hardened(46) :: DeterministicWallet.hardened(1) :: Nil
+
+  // WARNING: if you change this path, you will change your node id even if the seed remains the same!!!
+  // Note that the node path and the above channel path are on different branches so even if the
+  // node key is compromised there is no way to retrieve the wallet keys
+  val nodeKeyBasePath = DeterministicWallet.hardened(46) :: DeterministicWallet.hardened(0) :: Nil
 }
 
 /**
@@ -109,7 +113,7 @@ class LocalKeyManager(seed: BinaryData) extends KeyManager {
     Transactions.sign(tx, currentKey)
   }
 
-  override def signChannelAnnouncement(channelKeyPath: DeterministicWallet.KeyPath, chainHash: BinaryData, shortChannelId: Long, remoteNodeId: PublicKey, remoteFundingKey: PublicKey, features: BinaryData): (BinaryData, BinaryData) = {
+  override def signChannelAnnouncement(channelKeyPath: DeterministicWallet.KeyPath, chainHash: BinaryData, shortChannelId: ShortChannelId, remoteNodeId: PublicKey, remoteFundingKey: PublicKey, features: BinaryData): (BinaryData, BinaryData) = {
     val witness = if (Announcements.isNode1(nodeId.toBin, remoteNodeId.toBin)) {
       Announcements.channelAnnouncementWitnessEncode(chainHash, shortChannelId, nodeId, remoteNodeId, fundingPublicKey(channelKeyPath).publicKey, remoteFundingKey, features)
     } else {
