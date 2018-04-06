@@ -168,7 +168,11 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
           }
           closing.mutualClosePublished.map(doPublish(_))
           closing.localCommitPublished.foreach(doPublish(_))
-          closing.remoteCommitPublished.foreach(doPublish(_))
+          closing.remoteCommitPublished.foreach { remoteCommitPublished =>
+            log.warning(s"recomputing claim remote tx!")
+            val remoteCommitPublished1 = Closing.claimRemoteCommitTxOutputs(keyManager, closing.commitments, closing.commitments.remoteCommit, remoteCommitPublished.commitTx)
+            doPublish(remoteCommitPublished1)
+          }
           closing.nextRemoteCommitPublished.foreach(doPublish(_))
           closing.revokedCommitPublished.foreach(doPublish(_))
           // no need to go OFFLINE, we can directly switch to CLOSING
