@@ -1,22 +1,41 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.gui
 
 import java.time.LocalDateTime
 import java.util.function.Predicate
+
 import javafx.application.Platform
 import javafx.event.{ActionEvent, EventHandler}
 import javafx.fxml.FXMLLoader
+import javafx.scene.control.Alert.AlertType
+import javafx.scene.control.{Alert, ButtonType}
 import javafx.scene.layout.VBox
-
 import akka.actor.{Actor, ActorLogging, ActorRef, Terminated}
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin._
 import fr.acinq.eclair.CoinUtils
 import fr.acinq.eclair.blockchain.bitcoind.zmq.ZMQActor.{ZMQConnected, ZMQDisconnected}
-import fr.acinq.eclair.blockchain.electrum.ElectrumClient.{ElectrumConnected, ElectrumDisconnected}
+import fr.acinq.eclair.blockchain.electrum.ElectrumClient.{ElectrumDisconnected, ElectrumReady}
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.gui.controllers._
-import fr.acinq.eclair.payment.{PaymentReceived, PaymentRelayed, PaymentSent}
-import fr.acinq.eclair.router._
+import fr.acinq.eclair.payment.PaymentLifecycle.{LocalFailure, PaymentFailed, PaymentSucceeded, RemoteFailure}
+import fr.acinq.eclair.payment._
+import fr.acinq.eclair.router.{NORMAL => _, _}
 import fr.acinq.eclair.wire.NodeAnnouncement
 
 import scala.collection.JavaConversions._
@@ -26,6 +45,9 @@ import scala.collection.JavaConversions._
   * Created by PM on 16/08/2016.
   */
 class GUIUpdater(mainController: MainController) extends Actor with ActorLogging {
+
+  val STATE_MUTUAL_CLOSE = Set(WAIT_FOR_INIT_INTERNAL, WAIT_FOR_OPEN_CHANNEL, WAIT_FOR_ACCEPT_CHANNEL, WAIT_FOR_FUNDING_INTERNAL, WAIT_FOR_FUNDING_CREATED, WAIT_FOR_FUNDING_SIGNED, NORMAL)
+  val STATE_FORCE_CLOSE = Set(WAIT_FOR_FUNDING_CONFIRMED, WAIT_FOR_FUNDING_LOCKED, NORMAL, SHUTDOWN, NEGOTIATING, OFFLINE, SYNCING)
 
   /**
     * Needed to stop JavaFX complaining about updates from non GUI thread
@@ -48,7 +70,16 @@ class GUIUpdater(mainController: MainController) extends Actor with ActorLogging
     channelPaneController.channelId.setText(temporaryChannelId.toString())
     channelPaneController.funder.setText(if (isFunder) "Yes" else "No")
     channelPaneController.close.setOnAction(new EventHandler[ActionEvent] {
-      override def handle(event: ActionEvent) = channel ! CMD_CLOSE(None)
+      override def handle(event: ActionEvent) = channel ! CMD_CLOSE(scriptPubKey = None)
+    })
+    channelPaneController.forceclose.setOnAction(new EventHandler[ActionEvent] {
+      override def handle(event: ActionEvent) = {
+        val alert = new Alert(AlertType.WARNING, "Careful: force-close is more expensive than a regular close and will incur a delay before funds are spendable.\n\nAre you sure you want to proceed?", ButtonType.YES, ButtonType.NO)
+        alert.showAndWait
+        if (alert.getResult eq ButtonType.YES) {
+          channel ! CMD_FORCECLOSE
+        }
+      }
     })
 
     // set the node alias if the node has already been announced
@@ -90,15 +121,18 @@ class GUIUpdater(mainController: MainController) extends Actor with ActorLogging
       val channelPaneController = m(channel)
       runInGuiThread(() => channelPaneController.channelId.setText(s"$channelId"))
 
-    case ChannelStateChanged(channel, _, _, _, currentState, _) if m.contains(channel) =>
+    case ChannelStateChanged(channel, _, _, _, currentState, currentData) if m.contains(channel) =>
       val channelPaneController = m(channel)
       runInGuiThread { () =>
-        if (currentState == CLOSING || currentState == CLOSED) {
-          channelPaneController.close.setVisible(false)
-        } else {
-          channelPaneController.close.setVisible(true)
+
+        (currentState, currentData) match {
+          case (WAIT_FOR_FUNDING_CONFIRMED, d: HasCommitments) =>
+            channelPaneController.txId.setText(d.commitments.commitInput.outPoint.txid.toString())
+          case _ => {}
         }
-        channelPaneController.close.setText(if (OFFLINE == currentState) "Force close" else "Close")
+
+        channelPaneController.close.setVisible(STATE_MUTUAL_CLOSE.contains(currentState))
+        channelPaneController.forceclose.setVisible(STATE_FORCE_CLOSE.contains(currentState))
         channelPaneController.state.setText(currentState.toString)
       }
 
@@ -174,6 +208,22 @@ class GUIUpdater(mainController: MainController) extends Actor with ActorLogging
           mainController.networkChannelsList.update(idx, c)
         }
       }
+
+    case p: PaymentSucceeded =>
+      val message = CoinUtils.formatAmountInUnit(MilliSatoshi(p.amountMsat), FxApp.getUnit, withUnit = true)
+      mainController.handlers.notification("Payment Sent", message, NOTIFICATION_SUCCESS)
+
+    case p: PaymentFailed =>
+      val distilledFailures = PaymentLifecycle.transformForUser(p.failures)
+      val message = s"${distilledFailures.size} attempts:\n${
+        distilledFailures.map {
+          case LocalFailure(t) => s"- (local) ${t.getMessage}"
+          case RemoteFailure(_, e) => s"- (remote) ${e.failureMessage.message}"
+          case _ => "- Unknown error"
+        }.mkString("\n")
+      }"
+      mainController.handlers.notification("Payment Failed", message, NOTIFICATION_ERROR)
+
     case p: PaymentSent =>
       log.debug(s"payment sent with h=${p.paymentHash}, amount=${p.amount}, fees=${p.feesPaid}")
       runInGuiThread(() => mainController.paymentSentList.prepend(new PaymentSentRecord(p, LocalDateTime.now())))
@@ -194,7 +244,7 @@ class GUIUpdater(mainController: MainController) extends Actor with ActorLogging
       log.debug("ZMQ connection DOWN")
       runInGuiThread(() => mainController.showBlockerModal("Bitcoin Core"))
 
-    case ElectrumConnected =>
+    case _: ElectrumReady =>
       log.debug("Electrum connection UP")
       runInGuiThread(() => mainController.hideBlockerModal)
 

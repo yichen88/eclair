@@ -1,3 +1,19 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.router
 
 import java.io.StringWriter
@@ -30,8 +46,8 @@ import scala.util.Try
 
 case class ChannelDesc(shortChannelId: ShortChannelId, a: PublicKey, b: PublicKey)
 case class Hop(nodeId: PublicKey, nextNodeId: PublicKey, lastUpdate: ChannelUpdate)
-case class RouteRequest(source: PublicKey, target: PublicKey, assistedRoutes: Seq[Seq[ExtraHop]] = Nil, ignoreNodes: Set[PublicKey] = Set.empty, ignoreChannels: Set[ShortChannelId] = Set.empty)
-case class RouteResponse(hops: Seq[Hop], ignoreNodes: Set[PublicKey], ignoreChannels: Set[ShortChannelId]) { require(hops.size > 0, "route cannot be empty") }
+case class RouteRequest(source: PublicKey, target: PublicKey, assistedRoutes: Seq[Seq[ExtraHop]] = Nil, ignoreNodes: Set[PublicKey] = Set.empty, ignoreChannels: Set[ChannelDesc] = Set.empty)
+case class RouteResponse(hops: Seq[Hop], ignoreNodes: Set[PublicKey], ignoreChannels: Set[ChannelDesc]) { require(hops.size > 0, "route cannot be empty") }
 case class ExcludeChannel(desc: ChannelDesc) // this is used when we get a TemporaryChannelFailure, to give time for the channel to recover (note that exclusions are directed)
 case class LiftChannelExclusion(desc: ChannelDesc)
 case object GetRoutingState
@@ -109,6 +125,12 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
       val fundingOutputScript = write(pay2wsh(Scripts.multiSig2of2(PublicKey(c.bitcoinKey1), PublicKey(c.bitcoinKey2))))
       watcher ! WatchSpentBasic(self, txid, outputIndex, fundingOutputScript, BITCOIN_FUNDING_EXTERNAL_CHANNEL_SPENT(c.shortChannelId))
     }
+
+    // on restart we update our node announcement
+    // note that if we don't currently have public channels, this will be ignored
+    val nodeAnn = Announcements.makeNodeAnnouncement(nodeParams.privateKey, nodeParams.alias, nodeParams.color, nodeParams.publicAddresses)
+    self ! nodeAnn
+
     log.info(s"initialization completed, ready to process messages")
     startWith(NORMAL, Data(initNodes, initChannels, initChannelUpdates, Stash(Map.empty, Map.empty), rebroadcast = Rebroadcast(channels = Map.empty, updates = Map.empty, nodes = Map.empty), awaiting = Map.empty, privateChannels = Map.empty, privateUpdates = Map.empty, excludedChannels = Set.empty, graph))
   }
@@ -140,9 +162,25 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
           }
       }
 
-    case Event(LocalChannelDown(_, channelId, shortChannelId, _), d: Data) =>
-      log.debug("removed local channel_update for channelId={} shortChannelId={}", channelId, shortChannelId)
-      stay using d.copy(privateChannels = d.privateChannels - shortChannelId, privateUpdates = d.privateUpdates.filterKeys(_.shortChannelId != shortChannelId))
+    case Event(LocalChannelDown(_, channelId, shortChannelId, remoteNodeId), d: Data) =>
+      // a local channel has permanently gone down
+      if (d.channels.contains(shortChannelId)) {
+        // the channel was public, we will receive (or have already received) a WatchEventSpentBasic event, that will trigger a clean up of the channel
+        // so let's not do anything here
+        stay
+      } else if (d.privateChannels.contains(shortChannelId)) {
+        // the channel was private or public-but-not-yet-announced, let's do the clean up
+        log.debug("removing private local channel and channel_update for channelId={} shortChannelId={}", channelId, shortChannelId)
+        val desc1 = ChannelDesc(shortChannelId, nodeParams.nodeId, remoteNodeId)
+        val desc2 = ChannelDesc(shortChannelId, remoteNodeId, nodeParams.nodeId)
+        // we remove the corresponding updates from the graph
+        removeEdge(d.graph, desc1)
+        removeEdge(d.graph, desc2)
+        // and we remove the channel and channel_update from our state
+        stay using d.copy(privateChannels = d.privateChannels - shortChannelId, privateUpdates = d.privateUpdates - desc1 - desc2)
+      } else {
+        stay
+      }
 
     case Event(GetRoutingState, d: Data) =>
       log.info(s"getting valid announcements for $sender")
@@ -204,8 +242,6 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
             db.addChannel(c, tx.txid, capacity)
 
             // in case we just validated our first local channel, we announce the local node
-            // note that this will also make sure we always update our node announcement on restart (eg: alias, color), because
-            // even if we had stored a previous announcement, it would be overridden by this more recent one
             if (!d0.nodes.contains(nodeParams.nodeId) && isRelatedTo(c, nodeParams.nodeId)) {
               log.info("first local channel validated, announcing local node")
               val nodeAnn = Announcements.makeNodeAnnouncement(nodeParams.privateKey, nodeParams.alias, nodeParams.color, nodeParams.publicAddresses)
@@ -233,6 +269,8 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
       // we remove channel from awaiting map
       val awaiting1 = d0.awaiting - c
       if (success) {
+        // note: if the channel is graduating from private to public, the implementation (in the LocalChannelUpdate handler) guarantees that we will process a new channel_update
+        // right after the channel_announcement, channel_updates will be moved from private to public at that time
         val d1 = d0.copy(
           channels = d0.channels + (c.shortChannelId -> c),
           privateChannels = d0.privateChannels - c.shortChannelId, // we remove fake announcements that we may have made before
@@ -261,8 +299,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
       log.debug("received channel update for shortChannelId={} from {}", u.shortChannelId, sender)
       stay using handle(u, sender, d)
 
-    case Event(WatchEventSpentBasic(BITCOIN_FUNDING_EXTERNAL_CHANNEL_SPENT(shortChannelId)), d)
-      if d.channels.contains(shortChannelId) =>
+    case Event(WatchEventSpentBasic(BITCOIN_FUNDING_EXTERNAL_CHANNEL_SPENT(shortChannelId)), d) if d.channels.contains(shortChannelId) =>
       val lostChannel = d.channels(shortChannelId)
       log.info("funding tx of channelId={} has been spent", shortChannelId)
       // we need to remove nodes that aren't tied to any channels anymore
@@ -379,7 +416,8 @@ class Router(nodeParams: NodeParams, watcher: ActorRef) extends FSM[State, Data]
       // it takes precedence over all other channel_updates we know
       val assistedUpdates = assistedRoutes.flatMap(toFakeUpdates(_, end)).toMap
       // we also filter out updates corresponding to channels/nodes that are blacklisted for this particular request
-      val ignoredUpdates = getIgnoredUpdates(d.channels, d.updates ++ assistedUpdates, ignoreNodes, ignoreChannels) ++ d.excludedChannels
+      // TODO: in case of duplicates, d.updates will be overriden by assistedUpdates even if they are more recent!
+      val ignoredUpdates = getIgnoredChannelDesc(d.updates ++ d.privateUpdates ++ assistedUpdates, ignoreNodes) ++ ignoreChannels ++ d.excludedChannels
       log.info(s"finding a route $start->$end with assistedChannels={} ignoreNodes={} ignoreChannels={} excludedChannels={}", assistedUpdates.keys.mkString(","), ignoreNodes.map(_.toBin).mkString(","), ignoreChannels.mkString(","), d.excludedChannels.mkString(","))
       findRoute(d.graph, start, end, withEdges = assistedUpdates, withoutEdges = ignoredUpdates)
         .map(r => sender ! RouteResponse(r, ignoreNodes, ignoreChannels))
@@ -587,20 +625,16 @@ object Router {
   }
 
   /**
-    * This method is used after a payment failed, and we want to exclude some nodes/channels that we know are failing
+    * This method is used after a payment failed, and we want to exclude some nodes that we know are failing
     */
-  def getIgnoredUpdates(channels: Map[ShortChannelId, ChannelAnnouncement], updates: Map[ChannelDesc, ChannelUpdate], ignoreNodes: Set[PublicKey], ignoreChannels: Set[ShortChannelId]): Iterable[ChannelDesc] = {
-    val descNode = if (ignoreNodes.isEmpty) {
+  def getIgnoredChannelDesc(updates: Map[ChannelDesc, ChannelUpdate], ignoreNodes: Set[PublicKey]): Iterable[ChannelDesc] = {
+    val desc = if (ignoreNodes.isEmpty) {
       Iterable.empty[ChannelDesc]
     } else {
       // expensive, but node blacklisting shouldn't happen often
       updates.keys.filter(desc => ignoreNodes.contains(desc.a) || ignoreNodes.contains(desc.b))
     }
-    val descChannel = ignoreChannels.map(channels.get)
-      .flatten
-      .flatMap { c => Vector(ChannelDesc(c.shortChannelId, c.nodeId1, c.nodeId2), ChannelDesc(c.shortChannelId, c.nodeId2, c.nodeId1)) }
-      .filter(updates.contains)
-    descNode ++ descChannel
+    desc
   }
 
   /**

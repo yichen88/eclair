@@ -1,10 +1,25 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.channel.states.e
 
-import akka.actor.ActorRef
 import akka.actor.Status.Failure
 import akka.testkit.{TestFSMRef, TestProbe}
-import fr.acinq.bitcoin.Crypto.{PrivateKey, Scalar}
-import fr.acinq.bitcoin.{BinaryData, Block, Crypto, Satoshi, ScriptFlags, Transaction}
+import fr.acinq.bitcoin.Crypto.Scalar
+import fr.acinq.bitcoin.{BinaryData, Crypto, Satoshi, ScriptFlags, Transaction}
 import fr.acinq.eclair.TestConstants.{Alice, Bob}
 import fr.acinq.eclair.UInt64.Conversions._
 import fr.acinq.eclair.blockchain._
@@ -14,7 +29,7 @@ import fr.acinq.eclair.channel.{Data, State, _}
 import fr.acinq.eclair.payment._
 import fr.acinq.eclair.router.Announcements
 import fr.acinq.eclair.transactions.{IN, OUT}
-import fr.acinq.eclair.wire.{AnnouncementSignatures, ChannelUpdate, ClosingSigned, CommitSig, Error, FailureMessageCodecs, LightningMessageCodecsSpec, PermanentChannelFailure, RevokeAndAck, Shutdown, UpdateAddHtlc, UpdateFailHtlc, UpdateFailMalformedHtlc, UpdateFee, UpdateFulfillHtlc}
+import fr.acinq.eclair.wire.{AnnouncementSignatures, ChannelUpdate, ClosingSigned, CommitSig, Error, FailureMessageCodecs, PermanentChannelFailure, RevokeAndAck, Shutdown, UpdateAddHtlc, UpdateFailHtlc, UpdateFailMalformedHtlc, UpdateFee, UpdateFulfillHtlc}
 import fr.acinq.eclair.{Globals, TestConstants, TestkitBaseClass}
 import org.junit.runner.RunWith
 import org.scalatest.Tag
@@ -501,6 +516,63 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     }
   }
 
+  test("recv CMD_SIGN (two identical htlcs in each direction)") { case (alice, bob, alice2bob, bob2alice, _, _, _) =>
+    within(30 seconds) {
+      val sender = TestProbe()
+      val add = CMD_ADD_HTLC(10000000, "11" * 32, 400144)
+      sender.send(alice, add)
+      sender.expectMsg("ok")
+      alice2bob.expectMsgType[UpdateAddHtlc]
+      alice2bob.forward(bob)
+      sender.send(alice, add)
+      sender.expectMsg("ok")
+      alice2bob.expectMsgType[UpdateAddHtlc]
+      alice2bob.forward(bob)
+
+      crossSign(alice, bob, alice2bob, bob2alice)
+
+      sender.send(bob, add)
+      sender.expectMsg("ok")
+      bob2alice.expectMsgType[UpdateAddHtlc]
+      bob2alice.forward(alice)
+      sender.send(bob, add)
+      sender.expectMsg("ok")
+      bob2alice.expectMsgType[UpdateAddHtlc]
+      bob2alice.forward(alice)
+
+      // actual test starts here
+      sender.send(bob, CMD_SIGN)
+      sender.expectMsg("ok")
+      val commitSig = bob2alice.expectMsgType[CommitSig]
+      assert(commitSig.htlcSignatures.toSet.size == 4)
+    }
+  }
+
+  test("recv CMD_SIGN (htlcs with same pubkeyScript but different amounts)") { case (alice, bob, alice2bob, bob2alice, _, _, _) =>
+    within(30 seconds) {
+      val sender = TestProbe()
+      val add = CMD_ADD_HTLC(10000000, "11" * 32, 400144)
+      val epsilons = List(3, 1, 5, 7, 6) // unordered on purpose
+      val htlcCount = epsilons.size
+      for (i <- epsilons) {
+        sender.send(alice, add.copy(amountMsat = add.amountMsat + i * 1000))
+        sender.expectMsg("ok")
+        alice2bob.expectMsgType[UpdateAddHtlc]
+        alice2bob.forward(bob)
+      }
+      // actual test starts here
+      sender.send(alice, CMD_SIGN)
+      sender.expectMsg("ok")
+      val commitSig = alice2bob.expectMsgType[CommitSig]
+      assert(commitSig.htlcSignatures.toSet.size == htlcCount)
+      alice2bob.forward(bob)
+      awaitCond(bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.htlcTxsAndSigs.size ==  htlcCount)
+      val htlcTxs = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.htlcTxsAndSigs
+      val amounts = htlcTxs.map(_.txinfo.tx.txOut.head.amount.toLong)
+      assert(amounts === amounts.sorted)
+    }
+  }
+
   test("recv CMD_SIGN (no changes)") { case (alice, _, _, _, _, _, _) =>
     within(30 seconds) {
       val sender = TestProbe()
@@ -652,8 +724,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     }
   }
 
-  // TODO: maybe should be illegal?
-  ignore("recv CommitSig (two htlcs received with same r)") { case (alice, bob, alice2bob, bob2alice, _, _, _) =>
+  test("recv CommitSig (two htlcs received with same r)") { case (alice, bob, alice2bob, bob2alice, _, _, _) =>
     within(30 seconds) {
       val sender = TestProbe()
       val r = BinaryData("42" * 32)
@@ -1526,7 +1597,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
       val initialState = alice.stateData.asInstanceOf[DATA_NORMAL]
       val event = CurrentFeerates(FeeratesPerKw.single(20000))
       sender.send(alice, event)
-      alice2bob.expectMsg(UpdateFee(initialState.commitments.channelId, event.feeratesPerKw.block_1))
+      alice2bob.expectMsg(UpdateFee(initialState.commitments.channelId, event.feeratesPerKw.blocks_2))
     }
   }
 
@@ -1558,16 +1629,6 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
       bob2blockchain.expectMsgType[PublishAsap] // main delayed
       bob2blockchain.expectMsgType[WatchConfirmed]
       awaitCond(bob.stateName == CLOSING)
-    }
-  }
-
-  test("recv CurrentFeerate (ignore negative feerate)") { case (alice, _, alice2bob, _, _, _, _) =>
-    within(30 seconds) {
-      val sender = TestProbe()
-      // this happens when in regtest mode
-      val event = CurrentFeerates(FeeratesPerKw.single(-1))
-      sender.send(alice, event)
-      alice2bob.expectNoMsg(500 millis)
     }
   }
 
@@ -1721,22 +1782,86 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
       alice2bob.expectMsgType[Error]
 
       val mainTx = alice2blockchain.expectMsgType[PublishAsap].tx
-      val penaltyTx = alice2blockchain.expectMsgType[PublishAsap].tx
+      val mainPenaltyTx = alice2blockchain.expectMsgType[PublishAsap].tx
+      val htlcPenaltyTxs = for (i <- 0 until 4) yield alice2blockchain.expectMsgType[PublishAsap].tx
       assert(alice2blockchain.expectMsgType[WatchConfirmed].event == BITCOIN_TX_CONFIRMED(revokedTx))
       assert(alice2blockchain.expectMsgType[WatchConfirmed].event == BITCOIN_TX_CONFIRMED(mainTx))
       assert(alice2blockchain.expectMsgType[WatchSpent].event === BITCOIN_OUTPUT_SPENT) // main-penalty
+      // let's make sure that htlc-penalty txs each spend a different output
+      assert(htlcPenaltyTxs.map(_.txIn.head.outPoint.index).toSet.size === htlcPenaltyTxs.size)
+      htlcPenaltyTxs.foreach(htlcPenaltyTx => assert(alice2blockchain.expectMsgType[WatchSpent].event === BITCOIN_OUTPUT_SPENT))
       alice2blockchain.expectNoMsg(1 second)
 
       Transaction.correctlySpends(mainTx, Seq(revokedTx), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
-      Transaction.correctlySpends(penaltyTx, Seq(revokedTx), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+      Transaction.correctlySpends(mainPenaltyTx, Seq(revokedTx), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+      htlcPenaltyTxs.foreach(htlcPenaltyTx => Transaction.correctlySpends(htlcPenaltyTx, Seq(revokedTx), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS))
 
       // two main outputs are 760 000 and 200 000
       assert(mainTx.txOut(0).amount == Satoshi(741510))
-      assert(penaltyTx.txOut(0).amount == Satoshi(195170))
+      assert(mainPenaltyTx.txOut(0).amount == Satoshi(195170))
+      assert(htlcPenaltyTxs(0).txOut(0).amount == Satoshi(4230))
+      assert(htlcPenaltyTxs(1).txOut(0).amount == Satoshi(4230))
+      assert(htlcPenaltyTxs(2).txOut(0).amount == Satoshi(4230))
+      assert(htlcPenaltyTxs(3).txOut(0).amount == Satoshi(4230))
 
       awaitCond(alice.stateName == CLOSING)
       assert(alice.stateData.asInstanceOf[DATA_CLOSING].revokedCommitPublished.size == 1)
 
+    }
+  }
+
+  test("recv BITCOIN_FUNDING_SPENT (revoked commit with identical htlcs)") { case (alice, bob, alice2bob, bob2alice, alice2blockchain, _, _) =>
+    within(30 seconds) {
+      val sender = TestProbe()
+
+      // initially we have :
+      // alice = 800 000
+      //   bob = 200 000
+
+      val add = CMD_ADD_HTLC(10000000, "11" * 32, 400144)
+      sender.send(alice, add)
+      sender.expectMsg("ok")
+      alice2bob.expectMsgType[UpdateAddHtlc]
+      alice2bob.forward(bob)
+      sender.send(alice, add)
+      sender.expectMsg("ok")
+      alice2bob.expectMsgType[UpdateAddHtlc]
+      alice2bob.forward(bob)
+
+      crossSign(alice, bob, alice2bob, bob2alice)
+      // bob will publish this tx after it is revoked
+      val revokedTx = bob.stateData.asInstanceOf[DATA_NORMAL].commitments.localCommit.publishableTxs.commitTx.tx
+
+      sender.send(alice, add)
+      sender.expectMsg("ok")
+      alice2bob.expectMsgType[UpdateAddHtlc]
+      alice2bob.forward(bob)
+
+      crossSign(alice, bob, alice2bob, bob2alice)
+
+      // channel state for this revoked tx is as follows:
+      // alice = 780 000
+      //   bob = 200 000
+      //  a->b =  10 000
+      //  a->b =  10 000
+      assert(revokedTx.txOut.size == 4)
+      alice ! WatchEventSpent(BITCOIN_FUNDING_SPENT, revokedTx)
+      alice2bob.expectMsgType[Error]
+
+      val mainTx = alice2blockchain.expectMsgType[PublishAsap].tx
+      val mainPenaltyTx = alice2blockchain.expectMsgType[PublishAsap].tx
+      val htlcPenaltyTxs = for (i <- 0 until 2) yield alice2blockchain.expectMsgType[PublishAsap].tx
+      // let's make sure that htlc-penalty txs each spend a different output
+      assert(htlcPenaltyTxs.map(_.txIn.head.outPoint.index).toSet.size === htlcPenaltyTxs.size)
+      assert(alice2blockchain.expectMsgType[WatchConfirmed].event == BITCOIN_TX_CONFIRMED(revokedTx))
+      assert(alice2blockchain.expectMsgType[WatchConfirmed].event == BITCOIN_TX_CONFIRMED(mainTx))
+      assert(alice2blockchain.expectMsgType[WatchSpent].event === BITCOIN_OUTPUT_SPENT) // main-penalty
+      htlcPenaltyTxs.foreach(htlcPenaltyTx => assert(alice2blockchain.expectMsgType[WatchSpent].event === BITCOIN_OUTPUT_SPENT))
+      alice2blockchain.expectNoMsg(1 second)
+
+      Transaction.correctlySpends(mainTx, Seq(revokedTx), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+      Transaction.correctlySpends(mainPenaltyTx, Seq(revokedTx), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+      htlcPenaltyTxs.foreach(htlcPenaltyTx => Transaction.correctlySpends(htlcPenaltyTx, Seq(revokedTx), ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS))
     }
   }
 
@@ -1804,7 +1929,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
       assert(localCommitPublished.commitTx == aliceCommitTx)
       assert(localCommitPublished.htlcSuccessTxs.size == 1)
       assert(localCommitPublished.htlcTimeoutTxs.size == 2)
-      assert(localCommitPublished.claimHtlcDelayedTx.size == 3)
+      assert(localCommitPublished.claimHtlcDelayedTxs.size == 3)
     }
   }
 
@@ -1863,19 +1988,18 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     within(30 seconds) {
       val initialState = alice.stateData.asInstanceOf[DATA_NORMAL]
       val sender = TestProbe()
-      sender.send(alice, WatchEventConfirmed(BITCOIN_FUNDING_DEEPLYBURIED, 42, 10))
-      assert(relayer.expectMsgType[LocalChannelUpdate].channelAnnouncement_opt === None)
+      sender.send(alice, WatchEventConfirmed(BITCOIN_FUNDING_DEEPLYBURIED, 400000, 42))
       val annSigsA = alice2bob.expectMsgType[AnnouncementSignatures]
-      sender.send(bob, WatchEventConfirmed(BITCOIN_FUNDING_DEEPLYBURIED, 42, 10))
-      assert(relayer.expectMsgType[LocalChannelUpdate].channelAnnouncement_opt === None)
+      sender.send(bob, WatchEventConfirmed(BITCOIN_FUNDING_DEEPLYBURIED, 400000, 42))
       val annSigsB = bob2alice.expectMsgType[AnnouncementSignatures]
-      import initialState.commitments.localParams
-      import initialState.commitments.remoteParams
+      import initialState.commitments.{localParams, remoteParams}
       val channelAnn = Announcements.makeChannelAnnouncement(Alice.nodeParams.chainHash, annSigsA.shortChannelId, Alice.nodeParams.nodeId, remoteParams.nodeId, Alice.keyManager.fundingPublicKey(localParams.channelKeyPath).publicKey, remoteParams.fundingPubKey, annSigsA.nodeSignature, annSigsB.nodeSignature, annSigsA.bitcoinSignature, annSigsB.bitcoinSignature)
-      val channelUpdate = Announcements.makeChannelUpdate(Alice.nodeParams.chainHash, Alice.nodeParams.privateKey, remoteParams.nodeId, annSigsA.shortChannelId, Alice.nodeParams.expiryDeltaBlocks, Bob.nodeParams.htlcMinimumMsat, Alice.nodeParams.feeBaseMsat, Alice.nodeParams.feeProportionalMillionth)
       // actual test starts here
       bob2alice.forward(alice)
-      awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL] == initialState.copy(shortChannelId = annSigsA.shortChannelId, buried = true, channelAnnouncement = Some(channelAnn), channelUpdate = channelUpdate))
+      awaitCond({
+        val normal = alice.stateData.asInstanceOf[DATA_NORMAL]
+        normal.shortChannelId == annSigsA.shortChannelId && normal.buried && normal.channelAnnouncement == Some(channelAnn) && normal.channelUpdate.shortChannelId == annSigsA.shortChannelId
+      })
       assert(relayer.expectMsgType[LocalChannelUpdate].channelAnnouncement_opt === Some(channelAnn))
     }
   }
@@ -1888,8 +2012,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
       val annSigsA = alice2bob.expectMsgType[AnnouncementSignatures]
       sender.send(bob, WatchEventConfirmed(BITCOIN_FUNDING_DEEPLYBURIED, 42, 10))
       val annSigsB = bob2alice.expectMsgType[AnnouncementSignatures]
-      import initialState.commitments.localParams
-      import initialState.commitments.remoteParams
+      import initialState.commitments.{localParams, remoteParams}
       val channelAnn = Announcements.makeChannelAnnouncement(Alice.nodeParams.chainHash, annSigsA.shortChannelId, Alice.nodeParams.nodeId, remoteParams.nodeId, Alice.keyManager.fundingPublicKey(localParams.channelKeyPath).publicKey, remoteParams.fundingPubKey, annSigsA.nodeSignature, annSigsB.nodeSignature, annSigsA.bitcoinSignature, annSigsB.bitcoinSignature)
       bob2alice.forward(alice)
       awaitCond(alice.stateData.asInstanceOf[DATA_NORMAL].channelAnnouncement === Some(channelAnn))

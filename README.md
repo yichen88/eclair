@@ -6,16 +6,17 @@
 
 **Eclair** (french for Lightning) is a scala implementation of the Lightning Network. It can run with or without a GUI, and a JSON-RPC API is also available.
 
-This software follows the [Lightning Network Specifications (BOLTs)](https://github.com/lightningnetwork/lightning-rfc). Other implementations include [lightning-c], [lit], and [lnd].
+This software follows the [Lightning Network Specifications (BOLTs)](https://github.com/lightningnetwork/lightning-rfc). Other implementations include [c-lightning](https://github.com/ElementsProject/lightning) and [lnd](https://github.com/LightningNetwork/lnd).
  
  ---
  
- :construction: Both the BOLTs and Eclair itself are a work in progress. Expect things to break/change!
+ :construction: Both the BOLTs and Eclair itself are still a work in progress. Expect things to break/change!
  
- :warning: Eclair currently only runs on regtest or testnet.
+ :rotating_light: If you intend to run Eclair on mainnet:
+ - Keep in mind that it is beta-quality software and **don't put too much money** in it
+ - Eclair's JSON-RPC API should **NOT** be accessible from the outside world (similarly to Bitcoin Core API)
+ - Specific [configuration instructions for mainnet](#mainnet-usage) are provided below (by default Eclair runs on testnet)
  
- :rotating_light: We had reports of Eclair being tested on various segwit-enabled blockchains. Keep in mind that Eclair is still alpha quality software, by using it with actual coins you are putting your funds at risk!
-
 ---
 
 ## Lightning Network Specification Compliance
@@ -27,11 +28,12 @@ Please see the latest [release note](https://github.com/ACINQ/eclair/releases) f
 
 ## Installation
 
-:warning: **Those are valid for the most up-to-date, unreleased, version of eclair. Here are the [instructions for Eclair 0.2-alpha10](https://github.com/ACINQ/eclair/blob/v0.2-alpha10/README.md#installation)**.
-
 ### Configuring Bitcoin Core
 
-Eclair needs a _synchronized_, _segwit-ready_, **_zeromq-enabled_**, _wallet-enabled_, _non-pruning_, _tx-indexing_ [Bitcoin Core](https://github.com/bitcoin/bitcoin) node. This means that on Windows you will need Bitcoin Core 0.14+.
+:warning: Eclair requires Bitcoin Core 0.16.0 or higher. If you are upgrading an existing wallet, you need to create a new address and send all your funds to that address.
+
+Eclair needs a _synchronized_, _segwit-ready_, **_zeromq-enabled_**, _wallet-enabled_, _non-pruning_, _tx-indexing_ [Bitcoin Core](https://github.com/bitcoin/bitcoin) node. 
+Eclair will use any BTC it finds in the Bitcoin Core wallet to fund any channels you choose to open. Eclair will return BTC from closed channels to this wallet.
 
 Run bitcoind with the following minimal `bitcoin.conf`:
 ```
@@ -42,20 +44,8 @@ rpcpassword=bar
 txindex=1
 zmqpubrawblock=tcp://127.0.0.1:29000
 zmqpubrawtx=tcp://127.0.0.1:29000
-
-# lines below only needed with Bitcoin Core 0.16+
-deprecatedrpc=addwitnessaddress
 addresstype=p2sh-segwit
 ```
-
-Eclair will use any BTC it finds in the Bitcoin Core wallet to fund any channels you choose to open. Eclair will return BTC from closed channels to this wallet.
-
-On **__testnet__**, the addresstype of all your UTXOs needs to be `p2sh-of-p2wpkh`. This is the default addresstype starting with Bitcoin Core 0.16, which provides native segwit support. For earlier versions of Bitcoin Core, additional steps are necessary.
-
-* for new wallets created with Bitcoin Core 0.16 or later, no additional steps are necessary. 
-* for existing wallets migrated to Bitcoin Core 0.16 or later, you need to create a new address and send all your funds to that address.
-* if you are running Bitcoin 0.15.1 or earlier, you need to create a segwit address manually. To do this, use the debug console, create a new address with `getnewaddress`, import it as a witness address with `addwitnessaddress`, and send all your balance to this witness address. If you need to create and send funds manually, don't forget to create and specify a witness address for the change output (this option is available on the GUI once you set the `Enable coin control features` wallet option).
-
 
 ### Installing Eclair
 
@@ -90,7 +80,7 @@ Eclair reads its configuration file, and write its logs, to `~/.eclair` by defau
 To change your node's configuration, create a file named `eclair.conf` in `~/.eclair`. Here's an example configuration file:
 
 ```
-eclair.server.port=9735
+eclair.chain=testnet
 eclair.node-alias=eclair
 eclair.node-color=49daaa
 ```
@@ -99,6 +89,7 @@ Here are some of the most common options:
 
 name                         | description                                                                           | default value
 -----------------------------|---------------------------------------------------------------------------------------|--------------
+ eclair.chain                | Which blockchain to use: *regtest*, *testnet* or *mainnet*                            | testnet
  eclair.server.port          | Lightning TCP port                                                                    | 9735
  eclair.api.enabled          | Enable/disable the API                                                                | false. By default the API is disabled. If you want to enable it, you must set a password.
  eclair.api.port             | API HTTP port                                                                         | 8080
@@ -147,6 +138,8 @@ java -Declair.datadir=/tmp/node1 -jar eclair-node-gui-<version>-<commit_id>.jar
   allupdates   | nodeId                                                                                 | list all channels updates for this nodeId
   receive      | description                                                                            | generate a payment request without a required amount (can be useful for donations)
   receive      | amountMsat, description                                                                | generate a payment request for a given amount
+  checkinvoice | paymentRequest                                                                         | returns node, amount and payment hash in an invoice/paymentRequest
+  findroute    | paymentRequest|nodeId                                                                  | given a payment request or nodeID checks if there is a valid payment route returns JSON with attempts, nodes and channels of route
   send         | amountMsat, paymentHash, nodeId                                                        | send a payment to a lightning node
   send         | paymentRequest                                                                         | send a payment to a lightning node using a BOLT11 payment request
   send         | paymentRequest, amountMsat                                                             | send a payment to a lightning node using a BOLT11 payment request and a custom amount
@@ -154,11 +147,12 @@ java -Declair.datadir=/tmp/node1 -jar eclair-node-gui-<version>-<commit_id>.jar
   checkpayment | paymentRequest                                                                         | returns true if the payment has been received, false otherwise
   close        | channelId                                                                              | close a channel
   close        | channelId, scriptPubKey                                                                | close a channel and send the funds to the given scriptPubKey
+  forceclose   | channelId                                                                              | force-close a channel by publishing the local commitment tx (careful: this is more expensive than a regular close and will incur a delay before funds are spendable)"
   help         |                                                                                        | display available methods
 
 ## Docker
 
-A [Dockerfile](Dockerfile) image is built on each commit on [docker hub](https://hub.docker.com/r/ACINQ/eclair) for running a dockerized eclair-node.
+A [Dockerfile](Dockerfile) image is built on each commit on [docker hub](https://hub.docker.com/r/acinq/eclair) for running a dockerized eclair-node.
 
 You can use the `JAVA_OPTS` environment variable to set arguments to `eclair-node`.
 
@@ -172,15 +166,34 @@ If you want to persist the data directory, you can make the volume to your host 
 docker run -ti --rm -v "/path_on_host:/data" -e "JAVA_OPTS=-Declair.printToConsole" acinq\eclair
 ```
 
+## Mainnet usage
+
+Following are the minimum configuration files you need to use for Bitcoin Core and Eclair.
+
+### Bitcoin Core configuration
+
+```
+testnet=0
+server=1
+rpcuser=<your-rpc-user-here>
+rpcpassword=<your-rpc-password-here>
+txindex=1
+zmqpubrawblock=tcp://127.0.0.1:29000
+zmqpubrawtx=tcp://127.0.0.1:29000
+addresstype=p2sh-segwit
+```
+
+### Eclair configuration
+
+```
+eclair.chain=mainnet
+eclair.bitcoind.rpcport=8332
+eclair.bitcoind.rpcuser=<your-bitcoin-core-rpc-user-here>
+eclair.bitcoind.rpcpassword=<your-bitcoin-core-rpc-passsword-here>
+```
+
 
 ## Resources
 - [1] [The Bitcoin Lightning Network: Scalable Off-Chain Instant Payments](https://lightning.network/lightning-network-paper.pdf) by Joseph Poon and Thaddeus Dryja
 - [2] [Reaching The Ground With Lightning](https://github.com/ElementsProject/lightning/raw/master/doc/deployable-lightning.pdf) by Rusty Russell
 - [3] [Lightning Network Explorer](https://explorer.acinq.co) - Explore testnet LN nodes you can connect to
-
-[Amiko-Pay]: https://github.com/cornwarecjp/amiko-pay
-[lightning-c]: https://github.com/ElementsProject/lightning
-[lnd]: https://github.com/LightningNetwork/lnd
-[lit]: https://github.com/mit-dci/lit
-[Thunder]: https://github.com/blockchain/thunder
-

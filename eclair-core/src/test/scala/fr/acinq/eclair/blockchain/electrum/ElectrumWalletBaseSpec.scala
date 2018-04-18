@@ -1,3 +1,19 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.blockchain.electrum
 
 import java.io.File
@@ -31,7 +47,7 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
   val INTEGRATION_TMP_DIR = s"${System.getProperty("buildDirectory")}/integration-${UUID.randomUUID().toString}"
   logger.info(s"using tmp dir: $INTEGRATION_TMP_DIR")
 
-  val PATH_BITCOIND = new File(System.getProperty("buildDirectory"), "bitcoin-0.15.0/bin/bitcoind")
+  val PATH_BITCOIND = new File(System.getProperty("buildDirectory"), "bitcoin-0.16.0/bin/bitcoind")
   val PATH_BITCOIND_DATADIR = new File(INTEGRATION_TMP_DIR, "datadir-bitcoin")
   val PATH_ELECTRUMX_DBDIR = new File(INTEGRATION_TMP_DIR, "electrumx-db")
   val PATH_ELECTRUMX = new File(System.getProperty("electrumxPath"))
@@ -66,7 +82,8 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with FunSuiteLike wit
     sender.expectMsgType[JValue](10 seconds)
 
     startElectrum
-    electrumClient = system.actorOf(Props(new ElectrumClient(Seq(new InetSocketAddress("localhost", 51001)))))
+    // FIXME use docker
+    electrumClient = system.actorOf(Props(new ElectrumClient(new InetSocketAddress("localhost", 51001))))
     sender.send(electrumClient, ElectrumClient.AddStatusListener(sender.ref))
     sender.expectMsg(3 seconds, ElectrumClient.ElectrumReady)
   }

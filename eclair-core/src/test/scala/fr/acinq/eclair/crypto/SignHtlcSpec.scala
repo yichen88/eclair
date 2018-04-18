@@ -32,7 +32,7 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
 
   object Charlie {
     val seed = BinaryData("03" * 32)
-    val keyManager = new LocalKeyManager(seed)
+    val keyManager = new LocalKeyManager(seed, Block.RegtestGenesisBlock.hash)
 
     def sqlite = DriverManager.getConnection("jdbc:sqlite::memory:")
 
@@ -62,7 +62,6 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
       pendingRelayDb = new SqlitePendingRelayDb(sqlite),
       paymentsDb = new SqlitePaymentsDb(sqlite),
       routerBroadcastInterval = 60 seconds,
-      routerValidateInterval = 2 seconds,
       pingInterval = 30 seconds,
       maxFeerateMismatch = 1.0,
       updateFeeMinDiffRatio = 0.1,
@@ -72,7 +71,8 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
       channelExcludeDuration = 5 seconds,
       watcherType = BITCOIND,
       paymentRequestExpiry = 1 hour,
-      maxPendingPaymentRequests = 10000000)
+      maxPendingPaymentRequests = 10000000,
+      maxPaymentFee = 0.03)
 
     def id = nodeParams.privateKey.publicKey
 

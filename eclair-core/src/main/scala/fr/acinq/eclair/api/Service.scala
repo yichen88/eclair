@@ -1,7 +1,24 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.api
-import akka.actor.ActorRef
+
+import akka.actor.{ActorRef, Scheduler}
 import akka.http.scaladsl.model.HttpMethods._
-import akka.http.scaladsl.model.StatusCodes
+import akka.http.scaladsl.model._
 import akka.http.scaladsl.model.headers.CacheDirectives.{`max-age`, `no-store`, public}
 import akka.http.scaladsl.model.headers._
 import akka.http.scaladsl.server.Directives._
@@ -15,12 +32,13 @@ import de.heikoseeberger.akkahttpjson4s.Json4sSupport.ShouldWritePretty
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin.{BinaryData, MilliSatoshi, Satoshi}
 import fr.acinq.eclair.channel._
-import fr.acinq.eclair.{Kit, ShortChannelId, feerateByte2Kw}
 import fr.acinq.eclair.io.Peer.{GetPeerInfo, PeerInfo}
 import fr.acinq.eclair.io.{NodeURI, Peer}
-import fr.acinq.eclair.payment.{PaymentRequest, PaymentResult, ReceivePayment, SendPayment, _}
-import fr.acinq.eclair.router.ChannelDesc
+import fr.acinq.eclair.payment.PaymentLifecycle._
+import fr.acinq.eclair.payment.{PaymentLifecycle, PaymentRequest}
+import fr.acinq.eclair.router.{ChannelDesc, RouteRequest, RouteResponse}
 import fr.acinq.eclair.wire.{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement}
+import fr.acinq.eclair.{Kit, ShortChannelId, feerateByte2Kw}
 import grizzled.slf4j.Logging
 import org.json4s.JsonAST.{JBool, JInt, JString}
 import org.json4s.{JValue, jackson}
@@ -49,9 +67,11 @@ trait Service extends Logging {
 
   implicit def ec: ExecutionContext = ExecutionContext.Implicits.global
 
+  def scheduler: Scheduler
+
   implicit val serialization = jackson.Serialization
-  implicit val formats = org.json4s.DefaultFormats + new BinaryDataSerializer + new StateSerializer + new ShaChainSerializer + new PublicKeySerializer + new PrivateKeySerializer + new ScalarSerializer + new PointSerializer + new TransactionSerializer + new TransactionWithInputInfoSerializer + new InetSocketAddressSerializer + new OutPointKeySerializer + new ColorSerializer + new ShortChannelIdSerializer
-  implicit val timeout = Timeout(30 seconds)
+  implicit val formats = org.json4s.DefaultFormats + new BinaryDataSerializer + new UInt64Serializer + new ShortChannelIdSerializer + new StateSerializer + new ShaChainSerializer + new PublicKeySerializer + new PrivateKeySerializer + new ScalarSerializer + new PointSerializer + new TransactionSerializer + new TransactionWithInputInfoSerializer + new InetSocketAddressSerializer + new OutPointSerializer + new OutPointKeySerializer + new InputInfoSerializer + new ColorSerializer +  new RouteResponseSerializer + new ThrowableSerializer + new FailureMessageSerializer
+  implicit val timeout = Timeout(60 seconds)
   implicit val shouldWritePretty: ShouldWritePretty = ShouldWritePretty.True
 
   import Json4sSupport.{marshaller, unmarshaller}
@@ -60,11 +80,9 @@ trait Service extends Logging {
 
   def appKit: Kit
 
-  def userPassAuthenticator(credentials: Credentials): Option[String] = credentials match {
-    case p@Credentials.Provided(id) if p.verify(password) => Some(id)
-    case _ =>
-      // TODO deter brute force with a forced delay
-      None
+  def userPassAuthenticator(credentials: Credentials): Future[Option[String]] = credentials match {
+    case p@Credentials.Provided(id) if p.verify(password) => Future.successful(Some(id))
+    case _ => akka.pattern.after(1 second, using = scheduler)(Future.successful(None)) // force a 1 sec pause to deter brute force
   }
 
   val customHeaders = `Access-Control-Allow-Headers`("Content-Type, Authorization") ::
@@ -74,7 +92,7 @@ trait Service extends Logging {
   val myExceptionHandler = ExceptionHandler {
     case t: Throwable =>
       extractRequest { _ =>
-        logger.info(s"API call failed with cause=${t.getMessage}")
+        logger.error(s"API call failed with cause=${t.getMessage}")
         complete(StatusCodes.InternalServerError, JsonRPCRes(null, Some(Error(StatusCodes.InternalServerError.intValue, t.getMessage)), "-1"))
       }
   }
@@ -83,6 +101,7 @@ trait Service extends Logging {
     case Success(s) => completeRpc(requestId, s)
     case Failure(t) => reject(ExceptionRejection(requestId, t.getLocalizedMessage))
   }
+
   def completeRpc(requestId: String, result: AnyRef): Route = complete(JsonRPCRes(result, None, requestId))
 
   val myRejectionHandler: RejectionHandler = RejectionHandler.newBuilder()
@@ -106,60 +125,65 @@ trait Service extends Logging {
 
   val route: Route =
     respondWithDefaultHeaders(customHeaders) {
-      handleExceptions(myExceptionHandler) {
-        handleRejections(myRejectionHandler) {
-          authenticateBasic(realm = "Access restricted", userPassAuthenticator) { _ =>
-            pathSingleSlash {
-              post {
-                entity(as[JsonRPCBody]) {
-                  req =>
-                    val kit = appKit
-                    import kit._
+      withRequestTimeoutResponse(r => HttpResponse(StatusCodes.RequestTimeout).withEntity(ContentTypes.`application/json`, """{ "result": null, "error": { "code": 408, "message": "request timed out"} } """)) {
+        handleExceptions(myExceptionHandler) {
+          handleRejections(myRejectionHandler) {
+            authenticateBasicAsync(realm = "Access restricted", userPassAuthenticator) { _ =>
+              pathSingleSlash {
+                post {
+                  entity(as[JsonRPCBody]) {
+                    req =>
+                      val kit = appKit
+                      import kit._
 
-                    req.method match {
-                      // utility methods
-                      case "getinfo"      => completeRpcFuture(req.id, getInfoResponse)
-                      case "help"         => completeRpc(req.id, help)
+                      req.method match {
+                        // utility methods
+                        case "getinfo" => completeRpcFuture(req.id, getInfoResponse)
+                        case "help" => completeRpc(req.id, help)
 
-                      // channel lifecycle methods
-                      case "connect"      => req.params match {
-                        case JString(pubkey) :: JString(host) :: JInt(port) :: Nil =>
-                          completeRpcFuture(req.id, (switchboard ? Peer.Connect(NodeURI.parse(s"$pubkey@$host:$port"))).mapTo[String])
-                        case JString(uri) :: Nil =>
-                          completeRpcFuture(req.id, (switchboard ? Peer.Connect(NodeURI.parse(uri))).mapTo[String])
-                        case _ => reject(UnknownParamsRejection(req.id, "[nodeId@host:port] or [nodeId, host, port]"))
-                      }
-                      case "open"         => req.params match {
-                        case JString(nodeId) :: JInt(fundingSatoshis) :: Nil =>
-                          completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(0), fundingTxFeeratePerKw_opt = None, channelFlags = None)).mapTo[String])
-                        case JString(nodeId) :: JInt(fundingSatoshis) :: JInt(pushMsat) :: Nil =>
-                          completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(pushMsat.toLong), channelFlags = None, fundingTxFeeratePerKw_opt = None)).mapTo[String])
-                        case JString(nodeId) :: JInt(fundingSatoshis) :: JInt(pushMsat) :: JInt(fundingFeerateSatPerByte) :: Nil =>
-                          completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(pushMsat.toLong), fundingTxFeeratePerKw_opt = Some(feerateByte2Kw(fundingFeerateSatPerByte.toLong)), channelFlags = None)).mapTo[String])
-                        case JString(nodeId) :: JInt(fundingSatoshis) :: JInt(pushMsat) :: JInt(fundingFeerateSatPerByte) :: JInt(flags) :: Nil =>
-                          completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(pushMsat.toLong), fundingTxFeeratePerKw_opt = Some(feerateByte2Kw(fundingFeerateSatPerByte.toLong)), channelFlags = Some(flags.toByte))).mapTo[String])
-                        case _ => reject(UnknownParamsRejection(req.id, s"[nodeId, fundingSatoshis], [nodeId, fundingSatoshis, pushMsat], [nodeId, fundingSatoshis, pushMsat, feerateSatPerByte] or [nodeId, fundingSatoshis, pushMsat, feerateSatPerByte, flag]"))
-                      }
-                      case "close"        => req.params match {
-                        case JString(identifier) :: Nil => completeRpc(req.id, sendToChannel(identifier, CMD_CLOSE(scriptPubKey = None)).mapTo[String])
-                        case JString(identifier) :: JString(scriptPubKey) :: Nil => completeRpc(req.id, sendToChannel(identifier, CMD_CLOSE(scriptPubKey = Some(scriptPubKey))).mapTo[String])
-                        case _ => reject(UnknownParamsRejection(req.id, "[channelId] or [channelId, scriptPubKey]"))
-                      }
+                        // channel lifecycle methods
+                        case "connect" => req.params match {
+                          case JString(pubkey) :: JString(host) :: JInt(port) :: Nil =>
+                            completeRpcFuture(req.id, (switchboard ? Peer.Connect(NodeURI.parse(s"$pubkey@$host:$port"))).mapTo[String])
+                          case JString(uri) :: Nil =>
+                            completeRpcFuture(req.id, (switchboard ? Peer.Connect(NodeURI.parse(uri))).mapTo[String])
+                          case _ => reject(UnknownParamsRejection(req.id, "[nodeId@host:port] or [nodeId, host, port]"))
+                        }
+                        case "open" => req.params match {
+                          case JString(nodeId) :: JInt(fundingSatoshis) :: Nil =>
+                            completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(0), fundingTxFeeratePerKw_opt = None, channelFlags = None)).mapTo[String])
+                          case JString(nodeId) :: JInt(fundingSatoshis) :: JInt(pushMsat) :: Nil =>
+                            completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(pushMsat.toLong), channelFlags = None, fundingTxFeeratePerKw_opt = None)).mapTo[String])
+                          case JString(nodeId) :: JInt(fundingSatoshis) :: JInt(pushMsat) :: JInt(fundingFeerateSatPerByte) :: Nil =>
+                            completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(pushMsat.toLong), fundingTxFeeratePerKw_opt = Some(feerateByte2Kw(fundingFeerateSatPerByte.toLong)), channelFlags = None)).mapTo[String])
+                          case JString(nodeId) :: JInt(fundingSatoshis) :: JInt(pushMsat) :: JInt(fundingFeerateSatPerByte) :: JInt(flags) :: Nil =>
+                            completeRpcFuture(req.id, (switchboard ? Peer.OpenChannel(PublicKey(nodeId), Satoshi(fundingSatoshis.toLong), MilliSatoshi(pushMsat.toLong), fundingTxFeeratePerKw_opt = Some(feerateByte2Kw(fundingFeerateSatPerByte.toLong)), channelFlags = Some(flags.toByte))).mapTo[String])
+                          case _ => reject(UnknownParamsRejection(req.id, s"[nodeId, fundingSatoshis], [nodeId, fundingSatoshis, pushMsat], [nodeId, fundingSatoshis, pushMsat, feerateSatPerByte] or [nodeId, fundingSatoshis, pushMsat, feerateSatPerByte, flag]"))
+                        }
+                        case "close" => req.params match {
+                          case JString(identifier) :: Nil => completeRpcFuture(req.id, sendToChannel(identifier, CMD_CLOSE(scriptPubKey = None)).mapTo[String])
+                          case JString(identifier) :: JString(scriptPubKey) :: Nil => completeRpcFuture(req.id, sendToChannel(identifier, CMD_CLOSE(scriptPubKey = Some(scriptPubKey))).mapTo[String])
+                          case _ => reject(UnknownParamsRejection(req.id, "[channelId] or [channelId, scriptPubKey]"))
+                        }
+                        case "forceclose" => req.params match {
+                          case JString(identifier) :: Nil => completeRpcFuture(req.id, sendToChannel(identifier, CMD_FORCECLOSE).mapTo[String])
+                          case _ => reject(UnknownParamsRejection(req.id, "[channelId]"))
+                        }
 
-                      // local network methods
-                      case "peers"        => completeRpcFuture(req.id, for {
-                        peers <- (switchboard ? 'peers).mapTo[Map[PublicKey, ActorRef]]
-                        peerinfos <- Future.sequence(peers.values.map(peer => (peer ? GetPeerInfo).mapTo[PeerInfo]))
-                      } yield peerinfos)
-                      case "channels"     => req.params match {
-                        case Nil =>
-                          val f = for {
-                            channels_id <- (register ? 'channels).mapTo[Map[BinaryData, ActorRef]].map(_.keys)
-                            channels <- Future.sequence(channels_id.map(channel_id => sendToChannel(channel_id.toString(), CMD_GETINFO).mapTo[RES_GETINFO]
-                              .map(gi => LocalChannelInfo(gi.nodeId, gi.channelId, gi.state.toString))))
-                          } yield channels
-                          completeRpcFuture(req.id, f)
-                        case JString(remoteNodeId) :: Nil => Try(PublicKey(remoteNodeId)) match {
+                        // local network methods
+                        case "peers" => completeRpcFuture(req.id, for {
+                          peers <- (switchboard ? 'peers).mapTo[Map[PublicKey, ActorRef]]
+                          peerinfos <- Future.sequence(peers.values.map(peer => (peer ? GetPeerInfo).mapTo[PeerInfo]))
+                        } yield peerinfos)
+                        case "channels" => req.params match {
+                          case Nil =>
+                            val f = for {
+                              channels_id <- (register ? 'channels).mapTo[Map[BinaryData, ActorRef]].map(_.keys)
+                              channels <- Future.sequence(channels_id.map(channel_id => sendToChannel(channel_id.toString(), CMD_GETINFO).mapTo[RES_GETINFO]
+                                .map(gi => LocalChannelInfo(gi.nodeId, gi.channelId, gi.state.toString))))
+                            } yield channels
+                            completeRpcFuture(req.id, f)
+                          case JString(remoteNodeId) :: Nil => Try(PublicKey(remoteNodeId)) match {
                             case Success(pk) =>
                               val f = for {
                                 channels_id <- (register ? 'channelsTo).mapTo[Map[BinaryData, PublicKey]].map(_.filter(_._2 == pk).keys)
@@ -169,26 +193,26 @@ trait Service extends Logging {
                               completeRpcFuture(req.id, f)
                             case Failure(_) => reject(RpcValidationRejection(req.id, s"invalid remote node id '$remoteNodeId'"))
                           }
-                        case _ => reject(UnknownParamsRejection(req.id, "no arguments or [remoteNodeId]"))
-                      }
-                      case "channel"      => req.params match {
-                        case JString(identifier) :: Nil => completeRpcFuture(req.id, sendToChannel(identifier, CMD_GETINFO).mapTo[RES_GETINFO])
-                        case _ => reject(UnknownParamsRejection(req.id, "[channelId]"))
-                      }
-
-                      // global network methods
-                      case "allnodes"     => completeRpcFuture(req.id, (router ? 'nodes).mapTo[Iterable[NodeAnnouncement]])
-                      case "allchannels"  => completeRpcFuture(req.id, (router ? 'channels).mapTo[Iterable[ChannelAnnouncement]].map(_.map(c => ChannelDesc(c.shortChannelId, c.nodeId1, c.nodeId2))))
-                      case "allupdates"   => req.params match {
-                        case JString(nodeId) :: Nil => Try(PublicKey(nodeId)) match {
-                          case Success(pk) => completeRpcFuture(req.id, (router ? 'updatesMap).mapTo[Map[ChannelDesc, ChannelUpdate]].map(_.filter(e => e._1.a == pk || e._1.b == pk).values))
-                          case Failure(_) => reject(RpcValidationRejection(req.id, s"invalid remote node id '$nodeId'"))
+                          case _ => reject(UnknownParamsRejection(req.id, "no arguments or [remoteNodeId]"))
                         }
-                        case _ => completeRpcFuture(req.id, (router ? 'updates).mapTo[Iterable[ChannelUpdate]])
-                      }
+                        case "channel" => req.params match {
+                          case JString(identifier) :: Nil => completeRpcFuture(req.id, sendToChannel(identifier, CMD_GETINFO).mapTo[RES_GETINFO])
+                          case _ => reject(UnknownParamsRejection(req.id, "[channelId]"))
+                        }
+
+                        // global network methods
+                        case "allnodes" => completeRpcFuture(req.id, (router ? 'nodes).mapTo[Iterable[NodeAnnouncement]])
+                        case "allchannels" => completeRpcFuture(req.id, (router ? 'channels).mapTo[Iterable[ChannelAnnouncement]].map(_.map(c => ChannelDesc(c.shortChannelId, c.nodeId1, c.nodeId2))))
+                        case "allupdates" => req.params match {
+                          case JString(nodeId) :: Nil => Try(PublicKey(nodeId)) match {
+                            case Success(pk) => completeRpcFuture(req.id, (router ? 'updatesMap).mapTo[Map[ChannelDesc, ChannelUpdate]].map(_.filter(e => e._1.a == pk || e._1.b == pk).values))
+                            case Failure(_) => reject(RpcValidationRejection(req.id, s"invalid remote node id '$nodeId'"))
+                          }
+                          case _ => completeRpcFuture(req.id, (router ? 'updates).mapTo[Iterable[ChannelUpdate]])
+                        }
 
                       // payment methods
-                      case "receive"      => req.params match {
+                      case "receive" => req.params match {
                         // only the payment description is given: user may want to generate a donation payment request
                         case JString(description) :: Nil =>
                           completeRpcFuture(req.id, (paymentHandler ? ReceivePayment(None, description)).mapTo[PaymentRequest].map(PaymentRequest.write))
@@ -197,11 +221,36 @@ trait Service extends Logging {
                           completeRpcFuture(req.id, (paymentHandler ? ReceivePayment(Some(MilliSatoshi(amountMsat.toLong)), description)).mapTo[PaymentRequest].map(PaymentRequest.write))
                         case _ => reject(UnknownParamsRejection(req.id, "[description] or [amount, description]"))
                       }
-                      case "send"         => req.params match {
+
+                      case "checkinvoice" => req.params match {
+                        case JString(paymentRequest) :: Nil => Try(PaymentRequest.read(paymentRequest)) match {
+                          case Success(pr) => completeRpc(req.id,pr)
+                          case Failure(t) => reject(RpcValidationRejection(req.id, s"invalid payment request ${t.getMessage}"))
+                        }
+                        case _ => reject(UnknownParamsRejection(req.id, "[payment_request]"))
+                      }
+
+                      case "findroute" => req.params match {
+                        case JString(nodeId) :: Nil if nodeId.length() == 66 => Try(PublicKey(nodeId)) match {
+                          case Success(pk) => completeRpcFuture(req.id, (router ? RouteRequest(appKit.nodeParams.nodeId, pk)).mapTo[RouteResponse])
+                          case Failure(_) => reject(RpcValidationRejection(req.id, s"invalid nodeId hash '$nodeId'"))
+                        }
+                        case JString(paymentRequest) :: Nil => Try(PaymentRequest.read(paymentRequest)) match {
+                          case Success(pr) => completeRpcFuture(req.id, (router ? RouteRequest(appKit.nodeParams.nodeId, pr.nodeId)).mapTo[RouteResponse])
+                          case Failure(t) => reject(RpcValidationRejection(req.id, s"invalid payment request ${t.getLocalizedMessage}"))
+                        }
+                        case _ => reject(UnknownParamsRejection(req.id, "[payment_request] or [nodeId]"))
+                      }
+
+                      case "send" => req.params match {
                         // user manually sets the payment information
                         case JInt(amountMsat) :: JString(paymentHash) :: JString(nodeId) :: Nil =>
                           (Try(BinaryData(paymentHash)), Try(PublicKey(nodeId))) match {
-                            case (Success(ph), Success(pk)) => completeRpcFuture(req.id, (paymentInitiator ? SendPayment(amountMsat.toLong, ph, pk)).mapTo[PaymentResult])
+                            case (Success(ph), Success(pk)) => completeRpcFuture(req.id, (paymentInitiator ?
+                              SendPayment(amountMsat.toLong, ph, pk, maxFeePct = nodeParams.maxPaymentFee)).mapTo[PaymentResult].map {
+                              case s: PaymentSucceeded => s
+                              case f: PaymentFailed => f.copy(failures = PaymentLifecycle.transformForUser(f.failures))
+                            })
                             case (Failure(_), _) => reject(RpcValidationRejection(req.id, s"invalid payment hash '$paymentHash'"))
                             case _ => reject(RpcValidationRejection(req.id, s"invalid node id '$nodeId'"))
                           }
@@ -218,33 +267,37 @@ trait Service extends Logging {
                             logger.debug(s"api call for sending payment with amount_msat=$amount_msat")
                             // optional cltv expiry
                             val sendPayment = pr.minFinalCltvExpiry match {
-                              case None => SendPayment(amount_msat, pr.paymentHash, pr.nodeId)
-                              case Some(minFinalCltvExpiry) => SendPayment(amount_msat, pr.paymentHash, pr.nodeId, assistedRoutes = Nil, minFinalCltvExpiry)
+                              case None => SendPayment(amount_msat, pr.paymentHash, pr.nodeId, maxFeePct = nodeParams.maxPaymentFee)
+                              case Some(minFinalCltvExpiry) => SendPayment(amount_msat, pr.paymentHash, pr.nodeId, assistedRoutes = Nil, minFinalCltvExpiry, maxFeePct = nodeParams.maxPaymentFee)
                             }
-                            completeRpcFuture(req.id, (paymentInitiator ? sendPayment).mapTo[PaymentResult])
+                            completeRpcFuture(req.id, (paymentInitiator ? sendPayment).mapTo[PaymentResult].map {
+                              case s: PaymentSucceeded => s
+                              case f: PaymentFailed => f.copy(failures = PaymentLifecycle.transformForUser(f.failures))
+                            })
                           case _ => reject(RpcValidationRejection(req.id, s"payment request is not valid"))
                         }
                         case _ => reject(UnknownParamsRejection(req.id, "[amountMsat, paymentHash, nodeId or [paymentRequest] or [paymentRequest, amountMsat]"))
                       }
 
-                      // check received payments
-                      case "checkpayment" => req.params match {
-                        case JString(identifier) :: Nil => completeRpcFuture(req.id, for {
-                          paymentHash <- Try(PaymentRequest.read(identifier)) match {
-                            case Success(pr) => Future.successful(pr.paymentHash)
-                            case _ => Try(BinaryData(identifier)) match {
-                              case Success(s) => Future.successful(s)
-                              case _ => Future.failed(new IllegalArgumentException("payment identifier must be a payment request or a payment hash"))
+                        // check received payments
+                        case "checkpayment" => req.params match {
+                          case JString(identifier) :: Nil => completeRpcFuture(req.id, for {
+                            paymentHash <- Try(PaymentRequest.read(identifier)) match {
+                              case Success(pr) => Future.successful(pr.paymentHash)
+                              case _ => Try(BinaryData(identifier)) match {
+                                case Success(s) => Future.successful(s)
+                                case _ => Future.failed(new IllegalArgumentException("payment identifier must be a payment request or a payment hash"))
+                              }
                             }
-                          }
-                          found <- (paymentHandler ? CheckPayment(paymentHash)).map(found => new JBool(found.asInstanceOf[Boolean]))
-                        } yield found)
-                        case _ => reject(UnknownParamsRejection(req.id, "[paymentHash] or [paymentRequest]"))
-                      }
+                            found <- (paymentHandler ? CheckPayment(paymentHash)).map(found => new JBool(found.asInstanceOf[Boolean]))
+                          } yield found)
+                          case _ => reject(UnknownParamsRejection(req.id, "[paymentHash] or [paymentRequest]"))
+                        }
 
-                      // method name was not found
-                      case _ => reject(UnknownMethodRejection(req.id))
-                    }
+                        // method name was not found
+                        case _ => reject(UnknownMethodRejection(req.id))
+                      }
+                  }
                 }
               }
             }
@@ -268,11 +321,14 @@ trait Service extends Logging {
     "allupdates: list all channels updates",
     "allupdates (nodeId): list all channels updates for this nodeId",
     "receive (amountMsat, description): generate a payment request for a given amount",
+    "checkinvoice (paymentRequest): returns node, amount and payment hash in an invoice/paymentRequest",
+    "findroute (paymentRequest|nodeId): given a payment request or nodeID checks if there is a valid payment route returns JSON with attempts, nodes and channels of route",
     "send (amountMsat, paymentHash, nodeId): send a payment to a lightning node",
     "send (paymentRequest): send a payment to a lightning node using a BOLT11 payment request",
     "send (paymentRequest, amountMsat): send a payment to a lightning node using a BOLT11 payment request and a custom amount",
     "close (channelId): close a channel",
     "close (channelId, scriptPubKey): close a channel and send the funds to the given scriptPubKey",
+    "forceclose (channelId): force-close a channel by publishing the local commitment tx (careful: this is more expensive than a regular close and will incur a delay before funds are spendable)",
     "checkpayment (paymentHash): returns true if the payment has been received, false otherwise",
     "checkpayment (paymentRequest): returns true if the payment has been received, false otherwise",
     "getinfo: returns info about the blockchain and this node",

@@ -1,3 +1,19 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.channel.states.b
 
 import akka.testkit.{TestFSMRef, TestProbe}
@@ -40,7 +56,7 @@ class WaitForFundingSignedStateSpec extends TestkitBaseClass with StateTestsHelp
     test((alice, alice2bob, bob2alice, alice2blockchain))
   }
 
-  test("recv FundingSigned with valid signature") { case (alice, alice2bob, bob2alice, alice2blockchain) =>
+  test("recv FundingSigned with valid signature") { case (alice, _, bob2alice, alice2blockchain) =>
     within(30 seconds) {
       bob2alice.expectMsgType[FundingSigned]
       bob2alice.forward(alice)
@@ -50,7 +66,7 @@ class WaitForFundingSignedStateSpec extends TestkitBaseClass with StateTestsHelp
     }
   }
 
-  test("recv FundingSigned with invalid signature") { case (alice, alice2bob, bob2alice, alice2blockchain) =>
+  test("recv FundingSigned with invalid signature") { case (alice, alice2bob, _, _) =>
     within(30 seconds) {
       // sending an invalid sig
       alice ! FundingSigned("00" * 32, BinaryData("00" * 64))
@@ -59,9 +75,16 @@ class WaitForFundingSignedStateSpec extends TestkitBaseClass with StateTestsHelp
     }
   }
 
-  test("recv CMD_CLOSE") { case (alice, alice2bob, bob2alice, _) =>
+  test("recv CMD_CLOSE") { case (alice, _, _, _) =>
     within(30 seconds) {
       alice ! CMD_CLOSE(None)
+      awaitCond(alice.stateName == CLOSED)
+    }
+  }
+
+  test("recv CMD_FORCECLOSE") { case (alice, _, _, _) =>
+    within(30 seconds) {
+      alice ! CMD_FORCECLOSE
       awaitCond(alice.stateName == CLOSED)
     }
   }

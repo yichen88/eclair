@@ -1,5 +1,22 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.channel.states.c
 
+import akka.actor.Status.Failure
 import akka.testkit.{TestFSMRef, TestProbe}
 import fr.acinq.bitcoin.Transaction
 import fr.acinq.eclair.TestConstants.{Alice, Bob}
@@ -64,6 +81,14 @@ class WaitForFundingConfirmedStateSpec extends TestkitBaseClass with StateTestsH
     }
   }
 
+  test("recv BITCOIN_FUNDING_PUBLISH_FAILED") { case (alice, _, alice2bob, _, _) =>
+    within(30 seconds) {
+      alice ! BITCOIN_FUNDING_PUBLISH_FAILED
+      alice2bob.expectMsgType[Error]
+      awaitCond(alice.stateName == CLOSED)
+    }
+  }
+
   test("recv BITCOIN_FUNDING_TIMEOUT") { case (alice, _, alice2bob, _, _) =>
     within(30 seconds) {
       alice ! BITCOIN_FUNDING_TIMEOUT
@@ -104,10 +129,18 @@ class WaitForFundingConfirmedStateSpec extends TestkitBaseClass with StateTestsH
     }
   }
 
-  test("recv CMD_CLOSE") { case (alice, _, _, _, alice2blockchain) =>
+  test("recv CMD_CLOSE") { case (alice, _, _, _, _) =>
+    within(30 seconds) {
+      val sender = TestProbe()
+      sender.send(alice, CMD_CLOSE(None))
+      sender.expectMsg(Failure(CannotCloseInThisState(channelId(alice), WAIT_FOR_FUNDING_CONFIRMED)))
+    }
+  }
+
+  test("recv CMD_FORCECLOSE") { case (alice, _, _, _, alice2blockchain) =>
     within(30 seconds) {
       val tx = alice.stateData.asInstanceOf[DATA_WAIT_FOR_FUNDING_CONFIRMED].commitments.localCommit.publishableTxs.commitTx.tx
-      alice ! CMD_CLOSE(None)
+      alice ! CMD_FORCECLOSE
       awaitCond(alice.stateName == CLOSING)
       alice2blockchain.expectMsg(PublishAsap(tx))
       alice2blockchain.expectMsgType[PublishAsap] // claim-main-delayed

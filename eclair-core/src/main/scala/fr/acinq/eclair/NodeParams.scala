@@ -1,3 +1,19 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair
 
 import java.io.File
@@ -46,7 +62,6 @@ case class NodeParams(keyManager: KeyManager,
                       pendingRelayDb: PendingRelayDb,
                       paymentsDb: PaymentsDb,
                       routerBroadcastInterval: FiniteDuration,
-                      routerValidateInterval: FiniteDuration,
                       pingInterval: FiniteDuration,
                       maxFeerateMismatch: Double,
                       updateFeeMinDiffRatio: Double,
@@ -56,7 +71,8 @@ case class NodeParams(keyManager: KeyManager,
                       channelExcludeDuration: FiniteDuration,
                       watcherType: WatcherType,
                       paymentRequestExpiry: FiniteDuration,
-                      maxPendingPaymentRequests: Int) {
+                      maxPendingPaymentRequests: Int,
+                      maxPaymentFee: Double) {
   val privateKey = keyManager.nodeKey.privateKey
   val nodeId = keyManager.nodeId
 }
@@ -94,24 +110,32 @@ object NodeParams {
     }
   }
 
+  def makeChainHash(chain: String): BinaryData = {
+    chain match {
+      case "regtest" => Block.RegtestGenesisBlock.hash
+      case "testnet" => Block.TestnetGenesisBlock.hash
+      case "mainnet" => Block.LivenetGenesisBlock.hash
+      case invalid => throw new RuntimeException(s"invalid chain '$invalid'")
+    }
+  }
+
   def makeNodeParams(datadir: File, config: Config, keyManager: KeyManager): NodeParams = {
 
     datadir.mkdirs()
 
     val chain = config.getString("chain")
-    val chainHash = chain match {
-      case "test" => Block.TestnetGenesisBlock.hash
-      case "regtest" => Block.RegtestGenesisBlock.hash
-      case _ => throw new RuntimeException("only regtest and testnet are supported for now")
-    }
+    val chainHash = makeChainHash(chain)
 
-    val sqlite = DriverManager.getConnection(s"jdbc:sqlite:${new File(datadir, "eclair.sqlite")}")
+    val chaindir = new File(datadir, chain)
+    chaindir.mkdir()
+
+    val sqlite = DriverManager.getConnection(s"jdbc:sqlite:${new File(chaindir, "eclair.sqlite")}")
     val channelsDb = new SqliteChannelsDb(sqlite)
     val peersDb = new SqlitePeersDb(sqlite)
     val pendingRelayDb = new SqlitePendingRelayDb(sqlite)
     val paymentsDb = new SqlitePaymentsDb(sqlite)
 
-    val sqliteNetwork = DriverManager.getConnection(s"jdbc:sqlite:${new File(datadir, "network.sqlite")}")
+    val sqliteNetwork = DriverManager.getConnection(s"jdbc:sqlite:${new File(chaindir, "network.sqlite")}")
     val networkDb = new SqliteNetworkDb(sqliteNetwork)
 
     val color = BinaryData(config.getString("node-color"))
@@ -156,7 +180,6 @@ object NodeParams {
       pendingRelayDb = pendingRelayDb,
       paymentsDb = paymentsDb,
       routerBroadcastInterval = FiniteDuration(config.getDuration("router-broadcast-interval").getSeconds, TimeUnit.SECONDS),
-      routerValidateInterval = FiniteDuration(config.getDuration("router-validate-interval").getSeconds, TimeUnit.SECONDS),
       pingInterval = FiniteDuration(config.getDuration("ping-interval").getSeconds, TimeUnit.SECONDS),
       maxFeerateMismatch = config.getDouble("max-feerate-mismatch"),
       updateFeeMinDiffRatio = config.getDouble("update-fee_min-diff-ratio"),
@@ -166,6 +189,8 @@ object NodeParams {
       channelExcludeDuration = FiniteDuration(config.getDuration("channel-exclude-duration").getSeconds, TimeUnit.SECONDS),
       watcherType = watcherType,
       paymentRequestExpiry = FiniteDuration(config.getDuration("payment-request-expiry").getSeconds, TimeUnit.SECONDS),
-      maxPendingPaymentRequests = config.getInt("max-pending-payment-requests"))
+      maxPendingPaymentRequests = config.getInt("max-pending-payment-requests"),
+      maxPaymentFee = config.getDouble("max-payment-fee")
+    )
   }
 }

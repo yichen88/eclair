@@ -1,4 +1,22 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.blockchain.electrum
+
+import java.net.InetSocketAddress
 
 import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.testkit.{TestKit, TestProbe}
@@ -8,6 +26,7 @@ import org.junit.runner.RunWith
 import org.scalatest.junit.JUnitRunner
 import org.scalatest.{BeforeAndAfterAll, FunSuiteLike}
 
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 
 @RunWith(classOf[JUnitRunner])
@@ -21,10 +40,7 @@ class ElectrumClientSpec extends TestKit(ActorSystem("test")) with FunSuiteLike 
   val scriptHash: BinaryData = Crypto.sha256(referenceTx.txOut(0).publicKeyScript).reverse
 
   override protected def beforeAll(): Unit = {
-    val stream = classOf[ElectrumClientSpec].getResourceAsStream("/electrum/servers_testnet.json")
-    val addresses = ElectrumClient.readServerAddresses(stream)
-    stream.close()
-    client = system.actorOf(Props(new ElectrumClient(addresses)), "electrum-client")
+    client = system.actorOf(Props(new ElectrumClient(new InetSocketAddress("testnet.qtornado.com", 51001))), "electrum-client")
   }
 
   override protected def afterAll(): Unit = {
@@ -33,13 +49,19 @@ class ElectrumClientSpec extends TestKit(ActorSystem("test")) with FunSuiteLike 
 
   test("connect to an electrumx testnet server") {
     probe.send(client, AddStatusListener(probe.ref))
-    probe.expectMsg(15 seconds, ElectrumReady)
+    probe.expectMsgType[ElectrumReady](15 seconds)
   }
 
   test("get transaction") {
     probe.send(client, GetTransaction("c5efb5cbd35a44ba956b18100be0a91c9c33af4c7f31be20e33741d95f04e202"))
     val GetTransactionResponse(tx) = probe.expectMsgType[GetTransactionResponse]
     assert(tx.txid == BinaryData("c5efb5cbd35a44ba956b18100be0a91c9c33af4c7f31be20e33741d95f04e202"))
+  }
+
+  test("get header") {
+    probe.send(client, GetHeader(10000))
+    val GetHeaderResponse(header) = probe.expectMsgType[GetHeaderResponse]
+    assert(header.block_hash == BinaryData("000000000058b74204bb9d59128e7975b683ac73910660b6531e59523fb4a102"))
   }
 
   test("get merkle tree") {

@@ -1,23 +1,44 @@
+/*
+ * Copyright 2018 ACINQ SAS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package fr.acinq.eclair.db.sqlite
 
-import java.net.InetSocketAddress
+import java.net.{Inet4Address, Inet6Address, InetSocketAddress}
 import java.sql.Connection
 
 import fr.acinq.bitcoin.Crypto
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.db.PeersDb
-import fr.acinq.eclair.db.sqlite.SqliteUtils.using
-import fr.acinq.eclair.wire.LightningMessageCodecs.socketaddress
+import fr.acinq.eclair.db.sqlite.SqliteUtils.{getVersion, using}
+import fr.acinq.eclair.wire.{IPv4, IPv6, LightningMessageCodecs, NodeAddress}
 import scodec.bits.BitVector
 
 class SqlitePeersDb(sqlite: Connection) extends PeersDb {
 
+  val DB_NAME = "peers"
+  val CURRENT_VERSION = 1
+
   using(sqlite.createStatement()) { statement =>
+    require(getVersion(statement, DB_NAME, CURRENT_VERSION) == CURRENT_VERSION) // there is only one version currently deployed
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS peers (node_id BLOB NOT NULL PRIMARY KEY, data BLOB NOT NULL)")
   }
 
   override def addOrUpdatePeer(nodeId: Crypto.PublicKey, address: InetSocketAddress): Unit = {
-    val data = socketaddress.encode(address).require.toByteArray
+    val nodeaddress = NodeAddress(address)
+    val data = LightningMessageCodecs.nodeaddress.encode(nodeaddress).require.toByteArray
     using(sqlite.prepareStatement("UPDATE peers SET data=? WHERE node_id=?")) { update =>
       update.setBytes(1, data)
       update.setBytes(2, nodeId.toBin)
@@ -43,7 +64,13 @@ class SqlitePeersDb(sqlite: Connection) extends PeersDb {
       val rs = statement.executeQuery("SELECT node_id, data FROM peers")
       var m: Map[PublicKey, InetSocketAddress] = Map()
       while (rs.next()) {
-        m += (PublicKey(rs.getBytes("node_id")) -> socketaddress.decode(BitVector(rs.getBytes("data"))).require.value)
+        val nodeid = PublicKey(rs.getBytes("node_id"))
+        val nodeaddress = LightningMessageCodecs.nodeaddress.decode(BitVector(rs.getBytes("data"))).require.value match {
+          case IPv4(ipv4, port) => new InetSocketAddress(ipv4, port)
+          case IPv6(ipv6, port) => new InetSocketAddress(ipv6, port)
+          case _ => ???
+        }
+        m += (nodeid -> nodeaddress)
       }
       m
     }
