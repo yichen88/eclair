@@ -72,7 +72,8 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
       watcherType = BITCOIND,
       paymentRequestExpiry = 1 hour,
       maxPendingPaymentRequests = 10000000,
-      maxPaymentFee = 0.03)
+      maxPaymentFee = 0.03,
+      minFundingSatoshis = 200000L)
 
     def id = nodeParams.privateKey.publicKey
 
