@@ -23,7 +23,7 @@ import akka.actor.{ActorRef, ActorSystem}
 import akka.testkit.{TestKit, TestProbe}
 import com.google.common.net.HostAndPort
 import com.typesafe.config.{Config, ConfigFactory}
-import fr.acinq.bitcoin.Crypto.PublicKey
+import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.{Base58, Base58Check, Bech32, BinaryData, Block, Crypto, MilliSatoshi, OP_0, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_EQUALVERIFY, OP_HASH160, OP_PUSHDATA, Satoshi, Script, ScriptFlags, Transaction}
 import fr.acinq.eclair.blockchain.bitcoind.BitcoindService
 import fr.acinq.eclair.blockchain.bitcoind.rpc.ExtendedBitcoinClient
@@ -31,7 +31,7 @@ import fr.acinq.eclair.blockchain.{Watch, WatchConfirmed}
 import fr.acinq.eclair.channel.Register.Forward
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.Sphinx.ErrorPacket
-import fr.acinq.eclair.io.Peer.Disconnect
+import fr.acinq.eclair.io.Peer.{Disconnect, PeerRoutingMessage}
 import fr.acinq.eclair.io.{NodeURI, Peer}
 import fr.acinq.eclair.payment.PaymentLifecycle.{State => _, _}
 import fr.acinq.eclair.payment.{LocalPaymentHandler, PaymentRequest}
@@ -95,7 +95,8 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with BitcoindService 
       write(config.root().render())
       close
     }
-    val setup = new Setup(datadir, actorSystem = ActorSystem(s"system-$name"))
+    implicit val system = ActorSystem(s"system-$name")
+    val setup = new Setup(datadir)
     val kit = Await.result(setup.bootstrap, 10 seconds)
     nodes = nodes + (name -> kit)
   }
@@ -334,13 +335,11 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with BitcoindService 
   test("send multiple HTLCs A->D with a failover when a channel gets exhausted") {
     val sender = TestProbe()
     // there are two C-D channels with 5000000 sat, so we should be able to make 7 payments worth 1000000 sat each
-    for (i <- 0 until 7) {
-      // first we retrieve a payment hash from D for 2 mBTC
+    for (_ <- 0 until 7) {
       val amountMsat = MilliSatoshi(1000000000L)
       sender.send(nodes("D").paymentHandler, ReceivePayment(Some(amountMsat), "1 payment"))
       val pr = sender.expectMsgType[PaymentRequest]
 
-      // A send payment of 3 mBTC, more than asked but it should still be accepted
       val sendReq = SendPayment(amountMsat.amount, pr.paymentHash, nodes("D").nodeParams.nodeId)
       sender.send(nodes("A").paymentInitiator, sendReq)
       sender.expectMsgType[PaymentSucceeded]
@@ -776,12 +775,15 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with BitcoindService 
     sender.send(bitcoincli, BitcoinReq("generate", 1))
     sender.expectMsgType[JValue](10 seconds)
     logger.info(s"simulated ${channels.size} channels")
+
+    val remoteNodeId = PrivateKey(BinaryData("01" * 32), true).publicKey
+
     // then we make the announcements
     val announcements = channels.map(c => AnnouncementsBatchValidationSpec.makeChannelAnnouncement(c))
-    announcements.foreach(ann => nodes("A").router ! ann)
+    announcements.foreach(ann => nodes("A").router ! PeerRoutingMessage(remoteNodeId, ann))
     // we need to send channel_update otherwise router won't validate the channels
     val updates = channels.zip(announcements).map(x => AnnouncementsBatchValidationSpec.makeChannelUpdate(x._1, x._2.shortChannelId))
-    updates.foreach(update => nodes("A").router ! update)
+    updates.foreach(update => nodes("A").router ! PeerRoutingMessage(remoteNodeId, update))
     awaitCond({
       sender.send(nodes("D").router, 'channels)
       sender.expectMsgType[Iterable[ChannelAnnouncement]](5 seconds).size == channels.size + 5 // 5 remaining channels because  D->F{1-F4} have disappeared
