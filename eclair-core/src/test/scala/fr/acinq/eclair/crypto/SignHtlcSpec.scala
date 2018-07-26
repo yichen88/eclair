@@ -61,6 +61,7 @@ class SignHtlcSpec extends TestkitBaseClass with StateTestsHelperMethods {
       networkDb = new SqliteNetworkDb(sqlite),
       pendingRelayDb = new SqlitePendingRelayDb(sqlite),
       paymentsDb = new SqlitePaymentsDb(sqlite),
+      auditDb = new SqliteAuditDb(sqlite),
       routerBroadcastInterval = 60 seconds,
       pingInterval = 30 seconds,
       maxFeerateMismatch = 1.0,
