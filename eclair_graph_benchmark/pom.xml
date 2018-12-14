@@ -65,11 +65,6 @@ THE POSSIBILITY OF SUCH DAMAGE.
             <groupId>fr.acinq.eclair</groupId>
             <version>0.2-SNAPSHOT</version>
         </dependency>
-        <dependency>
-            <groupId>com.typesafe.akka</groupId>
-            <artifactId>akka-testkit_${scala.version.short}</artifactId>
-            <version>2.4.20</version>
-        </dependency>
     </dependencies>
 
     <properties>

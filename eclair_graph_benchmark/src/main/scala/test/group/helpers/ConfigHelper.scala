@@ -12,7 +12,7 @@ object ConfigHelper {
 		"""
 			 eclair {
 			 
-			   chain = "regtest"
+			   chain = "mainnet"
 			 
 			   server {
 			     public-ips = [] // external ips, will be announced on the network
