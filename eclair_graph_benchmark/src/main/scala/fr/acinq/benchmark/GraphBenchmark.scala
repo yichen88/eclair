@@ -11,8 +11,9 @@ import fr.acinq.bitcoin.Block
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.{NodeParams, _}
 import fr.acinq.eclair.crypto.LocalKeyManager
-import fr.acinq.eclair.router.{RouteRequest, Router}
+import fr.acinq.eclair.router.{RouteRequest, RouteResponse, Router}
 import org.openjdk.jmh.annotations._
+
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Promise}
 
@@ -69,7 +70,7 @@ class GraphBenchmark {
 	@BenchmarkMode(value = Array(Mode.AverageTime))
 	def findPath() = {
 
-		val routeFuture = router ? RouteRequest(fairlycheap, LightningPeachHub, 1200L) //route 1.2 sats
+		val routeFuture = router ? RouteRequest(fairlycheap, LightningPeachHub, 10000000) //DEFAULT_AMOUNT_MSAT
 
 		Await.result(routeFuture, 10 seconds)
 	}
