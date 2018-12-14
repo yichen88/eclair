@@ -41,6 +41,13 @@ class GraphBenchmark {
 		}
 	}))
 
+	Runtime.getRuntime.addShutdownHook(new Thread(new Runnable {
+		override def run(): Unit = {
+			Await.result(system.terminate(), 1 seconds)
+			System.exit(0)
+		}
+	}))
+
 	val keyManager = new LocalKeyManager(seed = randomKey.toBin, chainHash = Block.LivenetGenesisBlock.hash)
 	val params = NodeParams.makeNodeParams(mainnetDbFolder, eclairConf.getConfig("eclair"), keyManager)
 
