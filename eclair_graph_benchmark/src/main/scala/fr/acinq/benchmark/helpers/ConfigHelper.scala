@@ -1,4 +1,4 @@
-package test.group.helpers
+package fr.acinq.benchmark.helpers
 
 import com.typesafe.config.ConfigFactory
 
