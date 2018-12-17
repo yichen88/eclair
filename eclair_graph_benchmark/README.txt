@@ -20,12 +20,13 @@ Benchmark                         Mode  Cnt  Score   Error  Units
 GraphBenchmark.findPath           avgt    2  0.023           s/op
 GraphBenchmark.routerLoadingTime  avgt       2.430           s/op
 
-Custom implementation results: (custom_graph with java.util.TreeMap)
-# Run complete. Total time: 00:03:39
+Custom implementation results: (custom_graph with jheaps)
+# Run complete. Total time: 00:06:52
 
-Benchmark                         Mode  Cnt  Score   Error  Units
-GraphBenchmark.findPath           avgt    2  0.080           s/op
-GraphBenchmark.routerLoadingTime  avgt    2  2.520           s/op
+Benchmark                                   Mode  Cnt  Score   Error  Units
+GraphBenchmark.findPath                     avgt    2  0.075           s/op
+GraphBenchmark.findPathWithExtraChannels    avgt    2  0.018           s/op
+GraphBenchmark.findPathWithIgnoredChannels  avgt    2  0.368           s/op
 
 
 ######
