@@ -11,7 +11,8 @@ import fr.acinq.bitcoin.Block
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.eclair.{NodeParams, _}
 import fr.acinq.eclair.crypto.LocalKeyManager
-import fr.acinq.eclair.router.{RouteRequest, RouteResponse, Router}
+import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
+import fr.acinq.eclair.router.{Hop, RouteRequest, RouteResponse, Router}
 import org.openjdk.jmh.annotations._
 
 import scala.concurrent.duration._
@@ -22,10 +23,20 @@ class GraphBenchmark {
 
 	println("Preparing the benchmark")
 
-	//mainnet nodes used for route calculation benchmark, there IS a route (of length 3) between them
-	//03cb7983dc247f9f81a0fa2dfa3ce1c255365f7279c8dd143e086ca333df10e278 -> 036fc14cbad100a63ce4c058561d470e045318b6e9659484abcb3176ed7f0acbce -> 02a0bc43557fae6af7be8e3a29fdebda819e439bea9c0f8eb8ed6a0201f3471ca9
-	val fairlycheap = PublicKey("03cb7983dc247f9f81a0fa2dfa3ce1c255365f7279c8dd143e086ca333df10e278")
-	val LightningPeachHub = PublicKey("02a0bc43557fae6af7be8e3a29fdebda819e439bea9c0f8eb8ed6a0201f3471ca9")
+	//mainnet nodes used for route calculation benchmark, there IS a route (of length 7) between them
+	/**
+		* 032e000d7927b0d78f7ce4285b7c8e4db97300fb55f2833173d7c28289abbed5bf,
+		* 025b9dcfe847cd704ca357f3890680b55989be2ae3cf044b5d1a04e3318d1fbf28,
+		* 032b71cc07ea5ff346e7ce9eddad0b55d7e18b788a1e6b4dda3fbd3a7ddbf79bbc,
+		* 0307243743f60637f090347f9f2c1c98017071fd8f6afd8d6f6f6a64c7393a858a,
+		* 0237e39e60182b80817c7c1c432adf53d89cb256bd9d5a1017fd195dc6a5a8121e,
+		* 02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b,
+		* 022a94ee8d3b1dd52066b33a46a8f1f7ed0d4a9dcf5b0f310ce52e94a392a79299,
+		* 02ddc0e653386315299a8ca788c2e659f1ca6d96833c8abccdc7dcd84f4fad9700
+		*
+		*/
+	val BITCOINKOCU = PublicKey("032e000d7927b0d78f7ce4285b7c8e4db97300fb55f2833173d7c28289abbed5bf")
+	val miningshed = PublicKey("02ddc0e653386315299a8ca788c2e659f1ca6d96833c8abccdc7dcd84f4fad9700")
 
 	//for akka ask pattern
 	implicit val timeout = Timeout(10 seconds)
@@ -70,9 +81,49 @@ class GraphBenchmark {
 	@BenchmarkMode(value = Array(Mode.AverageTime))
 	def findPath() = {
 
-		val routeFuture = router ? RouteRequest(fairlycheap, LightningPeachHub, 10000000) //DEFAULT_AMOUNT_MSAT
+		val routeFuture = router ? RouteRequest(BITCOINKOCU, miningshed, 10000000) //DEFAULT_AMOUNT_MSAT
 
 		Await.result(routeFuture, 10 seconds)
+	}
+
+	@Benchmark
+	@BenchmarkMode(value = Array(Mode.AverageTime))
+	def findPathWithIgnoredChannels() = {
+
+		val ignoreNodes = Set(PublicKey("0237e39e60182b80817c7c1c432adf53d89cb256bd9d5a1017fd195dc6a5a8121e"), PublicKey("02ad6fb8d693dc1e4569bcedefadf5f72a931ae027dc0f0c544b34c1c6f3b9a02b"))
+
+		//there is still a route, of length 7
+		val routeWithIgnoreNodes = router ? RouteRequest(
+			BITCOINKOCU,
+			miningshed,
+			10000000,
+			ignoreNodes = ignoreNodes)) //DEFAULT_AMOUNT_MSAT
+
+		Await.result(routeWithIgnoreNodes, 10 seconds)
+	}
+
+	@Benchmark
+	@BenchmarkMode(value = Array(Mode.AverageTime))
+	def findPathWithExtraChannels() = {
+
+		val assisted = Seq(ExtraHop(
+			nodeId = PublicKey("02368951159b28b9bb2923f4d1b265856e559586f79575298385d5b228cc5757f9"),
+			shortChannelId = ShortChannelId(10L),
+			feeBaseMsat = 0,
+			feeProportionalMillionths = 0,
+			1
+		), ExtraHop(
+			nodeId = PublicKey("0217890e3aad8d35bc054f43acc00084b25229ecff0ab68debd82883ad65ee8266"),
+			shortChannelId = ShortChannelId(20L),
+			feeBaseMsat = 0,
+			feeProportionalMillionths = 0,
+			1
+		))
+
+		//route has length 5
+		val routeWithAssisted = router ? RouteRequest(BITCOINKOCU, miningshed, 10000000, assistedRoutes = Seq(assisted))
+
+		Await.result(routeWithAssisted, 10 seconds)
 	}
 
 }
