@@ -5,12 +5,12 @@ To build the project run "mvn clean install"
 To run the benchmark use "java -jar target/benchmark.jar -f 1 -i 1" this is the simplest benchmark run, use -h to discover new options
 
 
-Custom implementation results: (custom_graph: 1e8be66)
-# Run complete. Total time: 00:03:18
+Custom implementation results: (custom_graph with java.util.PriorityQueue)
+# Run complete. Total time: 00:03:53
 
 Benchmark                         Mode  Cnt  Score   Error  Units
-GraphBenchmark.findPath           avgt       0.539           s/op
-GraphBenchmark.routerLoadingTime  avgt       2.717           s/op
+GraphBenchmark.findPath           avgt    2  0.304           s/op
+GraphBenchmark.routerLoadingTime  avgt       2.359           s/op
 
 JGRAPH: (master: 521aa8a)
 # Run complete. Total time: 00:03:15
