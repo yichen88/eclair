@@ -98,7 +98,6 @@ class GraphBenchmark {
 			miningshed,
 			10000000,
 			ignoreNodes = ignoreNodes)
-		) //DEFAULT_AMOUNT_MSAT
 
 		Await.result(routeWithIgnoreNodes, 10 seconds)
 	}
