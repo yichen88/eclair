@@ -37,6 +37,9 @@ object Graph {
 	//TBD the cost for the neighbors of the sourceNode is always 0
 	def dijkstraShortestPath(g: DirectedGraph, sourceNode: PublicKey, targetNode: PublicKey, amountMsat: Long, ignoredEdges: Seq[ChannelDesc], extraEdges: Seq[GraphEdge]): Seq[GraphEdge] = {
 
+		//compute che list of ignored channels as an array of shortChannelId for faster lookups
+		val ignoredChanId = ignoredEdges.map(_.shortChannelId.toLong).toArray[Long]
+
 		//optionally add the extra edges to the graph
 		val graphVerticesWithExtra = extraEdges.nonEmpty match {
 			case true => g.vertexSet() ++ extraEdges.map(_.desc.a).toSet ++ extraEdges.map(_.desc.b).toSet
@@ -84,7 +87,7 @@ object Graph {
 					// test here for ignored edges
 					if (!(edge.update.htlcMaximumMsat.exists(_ < amountMsat) ||
 						amountMsat < edge.update.htlcMinimumMsat ||
-						ignoredEdges.contains(edge.desc))
+						ignoredChanId.contains(edge.desc.shortChannelId.toLong))
 					) {
 
 						val neighbor = edge.desc.b
