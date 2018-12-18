@@ -13,6 +13,10 @@ object Graph {
 
 	case class WeightedNode(key: PublicKey, weight: Long)
 
+	/**
+		* This comparator must be consistent with the "equals" behavior, thus for two weighted nodes with
+		* the same weight we distinguish them by their public key. See https://docs.oracle.com/javase/8/docs/api/java/util/Comparator.html
+		*/
 	object QueueComparator extends Ordering[WeightedNode] {
 		override def compare(x: WeightedNode, y: WeightedNode): Int = {
 			val weightCmp = x.weight.compareTo(y.weight)
@@ -57,14 +61,8 @@ object Graph {
 		val vertexQueue = new org.jheaps.tree.SimpleFibonacciHeap[WeightedNode, Short](QueueComparator)
 
 		//initialize the queue with the vertices having max distance
-		graphVerticesWithExtra.foreach {
-			case pk if pk == sourceNode =>
-				cost.put(pk, 0) // starting node has distance 0
-				vertexQueue.insert(WeightedNode(pk, 0))
-			case pk =>
-				cost.put(pk, Long.MaxValue)
-				vertexQueue.insert(WeightedNode(pk, Long.MaxValue))
-		}
+		cost.put(sourceNode, 0)
+		vertexQueue.insert(WeightedNode(sourceNode, 0))
 
 		var targetFound = false
 
@@ -92,9 +90,9 @@ object Graph {
 
 						val neighbor = edge.desc.b
 
-						val newMinimumKnownCost = cost.get(current.key) + edgeWeightByAmount(edge, amountMsat)
+						val newMinimumKnownCost = cost.getOrDefault(current.key, Long.MaxValue) + edgeWeightByAmount(edge, amountMsat)
 
-						val neighborCost = cost.get(neighbor)
+						val neighborCost = cost.getOrDefault(neighbor, Long.MaxValue)
 						//if this neighbor has a shorter distance than previously known
 						if (newMinimumKnownCost < neighborCost) {
 
