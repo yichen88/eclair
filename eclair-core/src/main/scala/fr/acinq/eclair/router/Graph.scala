@@ -178,7 +178,7 @@ object Graph {
           removeEdge(edge.desc).addEdge(edge)
         } else {
           val withVertices = addVertex(vertexIn).addVertex(vertexOut)
-          DirectedGraph(withVertices.vertices.updated(vertexIn, edge :: withVertices.vertices(vertexIn)))
+          DirectedGraph(withVertices.vertices.updated(vertexIn, edge +: withVertices.vertices(vertexIn)))
         }
       }
 
@@ -331,7 +331,7 @@ object Graph {
         // add all the vertices and edges in one go
         descAndUpdates.foreach { case (desc, update) =>
           // create or update vertex (desc.a) and update its neighbor
-          mutableMap.put(desc.a, GraphEdge(desc, update) :: mutableMap.getOrElse(desc.a, List.empty[GraphEdge]))
+          mutableMap.put(desc.a, GraphEdge(desc, update) +: mutableMap.getOrElse(desc.a, List.empty[GraphEdge]))
           mutableMap.get(desc.b) match {
             case None => mutableMap += desc.b -> List.empty[GraphEdge]
             case _ =>
