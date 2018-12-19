@@ -152,7 +152,7 @@ object Graph {
       */
     case class GraphEdge(desc: ChannelDesc, update: ChannelUpdate)
 
-    case class DirectedGraph(private val vertices: Map[PublicKey, Seq[GraphEdge]]) {
+    case class DirectedGraph(private val vertices: Map[PublicKey, List[GraphEdge]]) {
 
       def addEdge(d: ChannelDesc, u: ChannelUpdate): DirectedGraph = addEdge(GraphEdge(d, u))
 
@@ -178,7 +178,7 @@ object Graph {
           removeEdge(edge.desc).addEdge(edge)
         } else {
           val withVertices = addVertex(vertexIn).addVertex(vertexOut)
-          DirectedGraph(withVertices.vertices.updated(vertexIn, withVertices.vertices(vertexIn) :+ edge))
+          DirectedGraph(withVertices.vertices.updated(vertexIn, edge :: withVertices.vertices(vertexIn)))
         }
       }
 
@@ -254,7 +254,7 @@ object Graph {
         */
       def addVertex(key: PublicKey): DirectedGraph = {
         vertices.get(key) match {
-          case None => DirectedGraph(vertices + (key -> Seq.empty))
+          case None => DirectedGraph(vertices + (key -> List.empty))
           case _ => this
         }
       }
@@ -263,7 +263,7 @@ object Graph {
         * @param key
         * @return a list of the outgoing edges of vertex @param key, if the edge doesn't exists an empty list is returned
         */
-      def edgesOf(key: PublicKey): Seq[GraphEdge] = vertices.getOrElse(key, Seq.empty)
+      def edgesOf(key: PublicKey): Seq[GraphEdge] = vertices.getOrElse(key, List.empty)
 
       /**
         * @return the set of all the vertices in this graph
@@ -273,7 +273,7 @@ object Graph {
       /**
         * @return the set of all the vertices in this graph
         */
-      def edgeSet(): Set[GraphEdge] = vertices.values.flatten.toSet
+      def edgeSet(): Iterable[GraphEdge] = vertices.values.flatten
 
       /**
         * @param key
@@ -312,7 +312,7 @@ object Graph {
       // convenience constructors
       def apply(): DirectedGraph = new DirectedGraph(Map())
 
-      def apply(key: PublicKey): DirectedGraph = new DirectedGraph(Map((key -> Seq.empty)))
+      def apply(key: PublicKey): DirectedGraph = new DirectedGraph(Map(key -> List.empty))
 
       def apply(edge: GraphEdge): DirectedGraph = new DirectedGraph(Map()).addEdge(edge.desc, edge.update)
 
@@ -324,16 +324,16 @@ object Graph {
       def makeGraph(descAndUpdates: Map[ChannelDesc, ChannelUpdate]): DirectedGraph = {
 
         // initialize the map with the appropriate size to avoid resizing during the graph initialization
-        val mutableMap = new {} with mutable.HashMap[PublicKey, Seq[GraphEdge]] {
+        val mutableMap = new {} with mutable.HashMap[PublicKey, List[GraphEdge]] {
           override def initialSize: Int = descAndUpdates.size + 1
         }
 
         // add all the vertices and edges in one go
         descAndUpdates.foreach { case (desc, update) =>
           // create or update vertex (desc.a) and update its neighbor
-          mutableMap.put(desc.a, mutableMap.getOrElse(desc.a, Seq.empty[GraphEdge]) :+ GraphEdge(desc, update))
+          mutableMap.put(desc.a, GraphEdge(desc, update) :: mutableMap.getOrElse(desc.a, List.empty[GraphEdge]))
           mutableMap.get(desc.b) match {
-            case None => mutableMap += desc.b -> Seq.empty[GraphEdge]
+            case None => mutableMap += desc.b -> List.empty[GraphEdge]
             case _ =>
           }
         }
