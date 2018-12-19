@@ -28,10 +28,12 @@ object Graph {
   /**
     * Finds the shortest path in the graph, Dijsktra's algorithm
     *
-    * @param g
-    * @param sourceNode
-    * @param targetNode
-    * @param amountMsat
+    * @param g the graph on which will be performed the search
+    * @param sourceNode the starting node of the path we're looking for
+    * @param targetNode the destination node of the path
+    * @param amountMsat the amount (in millisatoshis) we want to transmit
+    * @param ignoredEdges a list of edges we do not want to consider
+    * @param extraEdges a list of extra edges we want to consider but are not currently in the graph
     * @return
     */
   def shortestPath(g: DirectedGraph, sourceNode: PublicKey, targetNode: PublicKey, amountMsat: Long, ignoredEdges: Seq[ChannelDesc], extraEdges: Seq[GraphEdge]): Seq[Hop] = {
@@ -104,7 +106,7 @@ object Graph {
               prev.put(neighbor, edge)
 
               // update the queue
-              vertexQueue.insert(WeightedNode(neighbor, newMinimumKnownCost)) //  O(1)
+              vertexQueue.insert(WeightedNode(neighbor, newMinimumKnownCost)) // O(1)
 
               // update the minimum known distance array
               cost.put(neighbor, newMinimumKnownCost)
@@ -147,8 +149,8 @@ object Graph {
     /**
       * Representation of an edge of the graph
       *
-      * @param desc
-      * @param update
+      * @param desc channel description
+      * @param update channel info
       */
     case class GraphEdge(desc: ChannelDesc, update: ChannelUpdate)
 
@@ -163,9 +165,7 @@ object Graph {
       /**
         * Adds and edge to the graph, if one of the two vertices is not found, it will be created
         *
-        * @param d      the channel desc
-        * @param u      the channel update
-        * @param weight the weight of this edge
+        * @param edge the edge that is going to be added to the graph
         * @return a new graph containing this edge
         */
       def addEdge(edge: GraphEdge): DirectedGraph = {
@@ -186,7 +186,7 @@ object Graph {
         * Removes the edge corresponding to the given pair channel-desc/channel-update,
         * NB: this operation does NOT remove any vertex
         *
-        * @param d
+        * @param desc the channel description associated to the edge that will be removed
         * @return
         */
       def removeEdge(desc: ChannelDesc): DirectedGraph = {
@@ -217,8 +217,8 @@ object Graph {
       }
 
       /**
-        * @param keyA
-        * @param keyB
+        * @param keyA the key associated with the starting vertex
+        * @param keyB the key associated with the ending vertex
         * @return all the edges going from keyA --> keyB (there might be more than one if it refers to different shortChannelId)
         */
       def getEdgesBetween(keyA: PublicKey, keyB: PublicKey): Seq[GraphEdge] = {
@@ -271,7 +271,7 @@ object Graph {
       def vertexSet(): Set[PublicKey] = vertices.keySet
 
       /**
-        * @return the set of all the vertices in this graph
+        * @return an iterator of all the edges in this graph
         */
       def edgeSet(): Iterable[GraphEdge] = vertices.values.flatten
 
