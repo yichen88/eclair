@@ -29,7 +29,7 @@ import io.netty.channel._
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
-import io.netty.handler.codec.string.{LineEncoder, StringDecoder}
+import io.netty.handler.codec.string.{LineEncoder, LineSeparator, StringDecoder}
 import io.netty.handler.codec.{LineBasedFrameDecoder, MessageToMessageDecoder, MessageToMessageEncoder}
 import io.netty.handler.ssl.SslContextBuilder
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory
@@ -78,7 +78,7 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
       ch.pipeline.addLast(new ElectrumResponseDecoder)
       ch.pipeline.addLast(new ActorHandler(self))
       // outbound handlers
-      ch.pipeline.addLast(new LineEncoder)
+      ch.pipeline.addLast(new LineEncoder(LineSeparator.UNIX))
       ch.pipeline.addLast(new JsonRPCRequestEncoder)
       // error handler
       ch.pipeline().addLast(new ExceptionHandler)
@@ -139,6 +139,7 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
   class ElectrumResponseDecoder extends MessageToMessageDecoder[String] {
     override def decode(ctx: ChannelHandlerContext, msg: String, out: util.List[AnyRef]): Unit = {
       val s = msg.asInstanceOf[String]
+      println(msg)
       val r = parseResponse(s)
       out.add(r)
     }
@@ -187,11 +188,11 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
   var addressSubscriptions = Map.empty[String, Set[ActorRef]]
   var scriptHashSubscriptions = Map.empty[BinaryData, Set[ActorRef]]
   val headerSubscriptions = collection.mutable.HashSet.empty[ActorRef]
-  val version = ServerVersion("2.1.7", "1.4")
+  val version = ServerVersion("eclair", "1.4")
   val statusListeners = collection.mutable.HashSet.empty[ActorRef]
   val keepHeaders = 100
 
-  var reqId = 0
+  var reqId = 0L
 
   // we need to regularly send a ping in order not to get disconnected
   val versionTrigger = context.system.scheduler.schedule(30 seconds, 30 seconds, self, version)
@@ -226,8 +227,8 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
     * @param request electrum request
     * @return the request id used to send the request
     */
-  def send(ctx: ChannelHandlerContext, request: Request): String = {
-    val electrumRequestId = "" + reqId
+  def send(ctx: ChannelHandlerContext, request: Request): Long = {
+    val electrumRequestId = reqId
     ctx.channel().writeAndFlush(makeRequest(request, electrumRequestId))
     reqId = reqId + 1
     electrumRequestId
@@ -266,7 +267,7 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
     case AddStatusListener(actor) => statusListeners += actor
   }
 
-  def connected(ctx: ChannelHandlerContext, height: Int, tip: BlockHeader, buffer: String, requests: Map[String, (Request, ActorRef)]): Receive = {
+  def connected(ctx: ChannelHandlerContext, height: Int, tip: BlockHeader, buffer: String, requests: Map[Long, (Request, ActorRef)]): Receive = {
     case AddStatusListener(actor) =>
       statusListeners += actor
       actor ! ElectrumReady(height, tip, serverAddress)
@@ -468,10 +469,10 @@ object ElectrumClient {
         Some(Error(code, message))
     }
     val id = json \ "id" match {
-      case JString(value) => value
-      case JInt(value) => value.toString()
-      case JLong(value) => value.toString
-      case _ => ""
+      case JString(value) => value.toLong
+      case JInt(value) => value.toLong
+      case JLong(value) => value
+      case _ => 0L
     }
     JsonRPCResponse(result, error, id)
   }
@@ -492,7 +493,7 @@ object ElectrumClient {
     (height, BlockHeader.read(hex))
   }
 
-  def makeRequest(request: Request, reqId: String): JsonRPCRequest = request match {
+  def makeRequest(request: Request, reqId: Long): JsonRPCRequest = request match {
     case ServerVersion(clientName, protocolVersion) => JsonRPCRequest(id = reqId, method = "server.version", params = clientName :: protocolVersion :: Nil)
     case GetAddressHistory(address) => JsonRPCRequest(id = reqId, method = "blockchain.address.get_history", params = address :: Nil)
     case GetScriptHashHistory(scripthash) => JsonRPCRequest(id = reqId, method = "blockchain.scripthash.get_history", params = scripthash.toString() :: Nil)
