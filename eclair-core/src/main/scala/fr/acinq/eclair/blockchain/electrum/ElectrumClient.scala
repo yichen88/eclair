@@ -139,7 +139,6 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
   class ElectrumResponseDecoder extends MessageToMessageDecoder[String] {
     override def decode(ctx: ChannelHandlerContext, msg: String, out: util.List[AnyRef]): Unit = {
       val s = msg.asInstanceOf[String]
-      println(msg)
       val r = parseResponse(s)
       out.add(r)
     }
@@ -227,8 +226,8 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
     * @param request electrum request
     * @return the request id used to send the request
     */
-  def send(ctx: ChannelHandlerContext, request: Request): Long = {
-    val electrumRequestId = reqId
+  def send(ctx: ChannelHandlerContext, request: Request): String = {
+    val electrumRequestId = "" + reqId
     ctx.channel().writeAndFlush(makeRequest(request, electrumRequestId))
     reqId = reqId + 1
     electrumRequestId
@@ -267,7 +266,7 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
     case AddStatusListener(actor) => statusListeners += actor
   }
 
-  def connected(ctx: ChannelHandlerContext, height: Int, tip: BlockHeader, buffer: String, requests: Map[Long, (Request, ActorRef)]): Receive = {
+  def connected(ctx: ChannelHandlerContext, height: Int, tip: BlockHeader, buffer: String, requests: Map[String, (Request, ActorRef)]): Receive = {
     case AddStatusListener(actor) =>
       statusListeners += actor
       actor ! ElectrumReady(height, tip, serverAddress)
@@ -469,10 +468,10 @@ object ElectrumClient {
         Some(Error(code, message))
     }
     val id = json \ "id" match {
-      case JString(value) => value.toLong
-      case JInt(value) => value.toLong
-      case JLong(value) => value
-      case _ => 0L
+      case JString(value) => value
+      case JInt(value) => value.toString()
+      case JLong(value) => value.toString
+      case _ => ""
     }
     JsonRPCResponse(result, error, id)
   }
@@ -493,7 +492,7 @@ object ElectrumClient {
     (height, BlockHeader.read(hex))
   }
 
-  def makeRequest(request: Request, reqId: Long): JsonRPCRequest = request match {
+  def makeRequest(request: Request, reqId: String): JsonRPCRequest = request match {
     case ServerVersion(clientName, protocolVersion) => JsonRPCRequest(id = reqId, method = "server.version", params = clientName :: protocolVersion :: Nil)
     case GetAddressHistory(address) => JsonRPCRequest(id = reqId, method = "blockchain.address.get_history", params = address :: Nil)
     case GetScriptHashHistory(scripthash) => JsonRPCRequest(id = reqId, method = "blockchain.scripthash.get_history", params = scripthash.toString() :: Nil)

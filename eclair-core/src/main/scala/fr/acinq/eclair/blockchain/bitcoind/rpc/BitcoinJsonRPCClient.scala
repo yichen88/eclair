@@ -29,8 +29,8 @@ trait BitcoinJsonRPCClient {
 }
 
 // @formatter:off
-case class JsonRPCRequest(jsonrpc: String = "1.0", id: Long = 0, method: String, params: Seq[Any])
+case class JsonRPCRequest(jsonrpc: String = "1.0", id: String = "scala-client", method: String, params: Seq[Any])
 case class Error(code: Int, message: String)
-case class JsonRPCResponse(result: JValue, error: Option[Error], id: Long)
+case class JsonRPCResponse(result: JValue, error: Option[Error], id: String)
 case class JsonRPCError(error: Error) extends IOException(s"${error.message} (code: ${error.code})")
 // @formatter:on
