@@ -94,7 +94,7 @@ class PruningSpec extends TestkitBaseClass with BeforeAndAfterAll {
 
       // we don't send the first 10 channels, which are stale
       val shortChannelIds1 = shortChannelIds.drop(10)
-      val reply = ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, 1.toByte, ChannelRangeQueries.encodeShortChannelIdsSingle(shortChannelIds1, ChannelRangeQueries.ZLIB_FORMAT, false))
+      val reply = ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, 1.toByte, EncodedShortChannelIds(EncodingTypes.UNCOMPRESSED, shortChannelIds1.toList))
       probe.send(router, PeerRoutingMessage(probe.ref, remoteNodeId, reply))
 
       // router should see that it has 10 channels that we don't have, check if they're stale, and prune them

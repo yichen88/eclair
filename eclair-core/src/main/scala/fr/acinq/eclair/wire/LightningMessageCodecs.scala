@@ -18,6 +18,7 @@ package fr.acinq.eclair.wire
 
 import java.math.BigInteger
 import java.net.{Inet4Address, Inet6Address, InetAddress}
+
 import com.google.common.cache.{CacheBuilder, CacheLoader}
 import fr.acinq.bitcoin.Crypto.{Point, PrivateKey, PublicKey, Scalar}
 import fr.acinq.bitcoin.{BinaryData, Crypto}
@@ -280,6 +281,17 @@ object LightningMessageCodecs {
     ("signature" | signature) ::
       nodeAnnouncementWitnessCodec).as[NodeAnnouncement]
 
+  val channelUpdateChecksumCodec =
+      ("shortChannelId" | shortchannelid) ::
+      (("messageFlags" | byte) >>:~ { messageFlags =>
+        ("channelFlags" | byte) ::
+          ("cltvExpiryDelta" | uint16) ::
+          ("htlcMinimumMsat" | uint64) ::
+          ("feeBaseMsat" | uint32) ::
+          ("feeProportionalMillionths" | uint32) ::
+          ("htlcMaximumMsat" | conditional((messageFlags & 1) != 0, uint64))
+      })
+
   val channelUpdateWitnessCodec =
     ("chainHash" | binarydata(32)) ::
       ("shortChannelId" | shortchannelid) ::
@@ -297,9 +309,14 @@ object LightningMessageCodecs {
     ("signature" | signature) ::
       channelUpdateWitnessCodec).as[ChannelUpdate]
 
+  val encodedShortChannelIdsCodec: Codec[EncodedShortChannelIds] =
+    discriminated[EncodedShortChannelIds].by(byte)
+      .\(EncodingTypes.UNCOMPRESSED) { case a@EncodedShortChannelIds(EncodingTypes.UNCOMPRESSED, _) => a }((provide(EncodingTypes.UNCOMPRESSED) :: list(shortchannelid)).as[EncodedShortChannelIds])
+      .\(EncodingTypes.COMPRESSED_ZLIB) { case a@EncodedShortChannelIds(EncodingTypes.COMPRESSED_ZLIB, _) => a }((provide(EncodingTypes.COMPRESSED_ZLIB) :: zlib(list(shortchannelid))).as[EncodedShortChannelIds])
+
   val queryShortChannelIdsCodec: Codec[QueryShortChannelIds] = (
     ("chainHash" | binarydata(32)) ::
-      ("data" | varsizebinarydata)
+      ("data" | variableSizeBytes(uint16, encodedShortChannelIdsCodec))
     ).as[QueryShortChannelIds]
 
   val replyShortChanelIdsEndCodec: Codec[ReplyShortChannelIdsEnd] = (
@@ -318,39 +335,96 @@ object LightningMessageCodecs {
       ("firstBlockNum" | uint32) ::
       ("numberOfBlocks" | uint32) ::
       ("complete" | byte) ::
-      ("data" | varsizebinarydata)
+      ("data" | variableSizeBytes(uint16, encodedShortChannelIdsCodec))
     ).as[ReplyChannelRange]
-
-  val queryShortChannelIdsExCodec: Codec[QueryShortChannelIdsEx] = (
-    ("chainHash" | binarydata(32)) ::
-      ("flag" | byte) ::
-      ("data" | varsizebinarydata)
-    ).as[QueryShortChannelIdsEx]
-
-  val replyShortChanelIdsEndExCodec: Codec[ReplyShortChannelIdsEndEx] = (
-    ("chainHash" | binarydata(32)) ::
-      ("complete" | byte)
-    ).as[ReplyShortChannelIdsEndEx]
-
-  val queryChannelRangeExCodec: Codec[QueryChannelRangeEx] = (
-    ("chainHash" | binarydata(32)) ::
-      ("firstBlockNum" | uint32) ::
-      ("numberOfBlocks" | uint32)
-    ).as[QueryChannelRangeEx]
-
-  val replyChannelRangeExCodec: Codec[ReplyChannelRangeEx] = (
-    ("chainHash" | binarydata(32)) ::
-      ("firstBlockNum" | uint32) ::
-      ("numberOfBlocks" | uint32) ::
-      ("complete" | byte) ::
-      ("data" | varsizebinarydata)
-    ).as[ReplyChannelRangeEx]
 
   val gossipTimestampFilterCodec: Codec[GossipTimestampFilter] = (
     ("chainHash" | binarydata(32)) ::
       ("firstTimestamp" | uint32) ::
       ("timestampRange" | uint32)
     ).as[GossipTimestampFilter]
+
+  val queryShortChannelIdsDeprecatedCodec: Codec[QueryShortChannelIdsDeprecated] = (
+    ("chainHash" | binarydata(32)) ::
+      ("flag" | byte) ::
+      ("data" | variableSizeBytes(uint16, encodedShortChannelIdsCodec))
+    ).as[QueryShortChannelIdsDeprecated]
+
+  val replyShortChanelIdsEndDeprecatedCodec: Codec[ReplyShortChannelIdsEndDeprecated] = (
+    ("chainHash" | binarydata(32)) ::
+      ("complete" | byte)
+    ).as[ReplyShortChannelIdsEndDeprecated]
+
+  val queryChannelRangeDeprecatedCodec: Codec[QueryChannelRangeDeprecated] = (
+    ("chainHash" | binarydata(32)) ::
+      ("firstBlockNum" | uint32) ::
+      ("numberOfBlocks" | uint32)
+    ).as[QueryChannelRangeDeprecated]
+
+  val shortChannelIdWithTimestampCodec: Codec[ShortChannelIdWithTimestamp] = (
+    ("shortChannelId" | shortchannelid) ::
+      ("timestamp" | uint32)
+    ).as[ShortChannelIdWithTimestamp]
+
+  val channelRangeWithTimestampDataCodec: Codec[EncodedShortChannelIdsWithTimestamp] =
+    discriminated[EncodedShortChannelIdsWithTimestamp].by(byte)
+      .\(EncodingTypes.UNCOMPRESSED) { case a@EncodedShortChannelIdsWithTimestamp(EncodingTypes.UNCOMPRESSED, _) => a }((provide(EncodingTypes.UNCOMPRESSED) :: list(shortChannelIdWithTimestampCodec)).as[EncodedShortChannelIdsWithTimestamp])
+      .\(EncodingTypes.COMPRESSED_ZLIB) { case a@EncodedShortChannelIdsWithTimestamp(EncodingTypes.COMPRESSED_ZLIB, _) => a }((provide(EncodingTypes.COMPRESSED_ZLIB) :: zlib(list(shortChannelIdWithTimestampCodec))).as[EncodedShortChannelIdsWithTimestamp])
+
+  val replyChannelRangeDeprecatedCodec: Codec[ReplyChannelRangeDeprecated] = (
+    ("chainHash" | binarydata(32)) ::
+      ("firstBlockNum" | uint32) ::
+      ("numberOfBlocks" | uint32) ::
+      ("complete" | byte) ::
+      ("data" | variableSizeBytes(uint16, channelRangeWithTimestampDataCodec))
+    ).as[ReplyChannelRangeDeprecated]
+
+  val shortChannelIdAndFlagCodec: Codec[ShortChannelIdAndFlag] = (
+    ("shortChannelId" | shortchannelid) ::
+      ("flag" | byte)
+    ).as[ShortChannelIdAndFlag]
+
+  val encodedShortChannelIdsAndFlagCodec: Codec[EncodedShortChannelIdsAndFlag] =
+    discriminated[EncodedShortChannelIdsAndFlag].by(byte)
+      .\(EncodingTypes.UNCOMPRESSED) { case a@EncodedShortChannelIdsAndFlag(EncodingTypes.UNCOMPRESSED, _) => a }((provide(EncodingTypes.UNCOMPRESSED) :: list(shortChannelIdAndFlagCodec)).as[EncodedShortChannelIdsAndFlag])
+      .\(EncodingTypes.COMPRESSED_ZLIB) { case a@EncodedShortChannelIdsAndFlag(EncodingTypes.COMPRESSED_ZLIB, _) => a }((provide(EncodingTypes.COMPRESSED_ZLIB) :: zlib(list(shortChannelIdAndFlagCodec))).as[EncodedShortChannelIdsAndFlag])
+
+  val queryShortChannelIdsWithFlagsCodec: Codec[QueryShortChannelIdsWithFlags] = (
+    ("chainHash" | binarydata(32)) ::
+      ("data" | variableSizeBytes(uint16, encodedShortChannelIdsAndFlagCodec))
+    ).as[QueryShortChannelIdsWithFlags]
+
+  val replyShortChannelIdsWithFlagsEndCodec: Codec[ReplyShortChannelIdsWithFlagsEnd] = (
+    ("chainHash" | binarydata(32)) ::
+      ("complete" | byte)
+    ).as[ReplyShortChannelIdsWithFlagsEnd]
+
+  val queryChannelRangeWithChecksumsCodec: Codec[QueryChannelRangeWithChecksums] = (
+    ("chainHash" | binarydata(32)) ::
+      ("firstBlockNum" | uint32) ::
+      ("numberOfBlocks" | uint32)
+    ).as[QueryChannelRangeWithChecksums]
+
+  val shortChannelIdWithChecksumsCodec: Codec[ShortChannelIdWithChecksums] = (
+    ("shortChannelId" | shortchannelid) ::
+      ("timestamp1" | uint32) ::
+      ("timestamp2" | uint32) ::
+      ("checksum1" | uint32) ::
+      ("checksum2" | uint32)
+    ).as[ShortChannelIdWithChecksums]
+
+  val channelRangeWithChecksumsDataCodec: Codec[EncodedShortChannelIdsWithChecksums] =
+    discriminated[EncodedShortChannelIdsWithChecksums].by(byte)
+      .\(EncodingTypes.UNCOMPRESSED) { case a@EncodedShortChannelIdsWithChecksums(EncodingTypes.UNCOMPRESSED, _) => a }((provide(EncodingTypes.UNCOMPRESSED) :: list(shortChannelIdWithChecksumsCodec)).as[EncodedShortChannelIdsWithChecksums])
+      .\(EncodingTypes.COMPRESSED_ZLIB) { case a@EncodedShortChannelIdsWithChecksums(EncodingTypes.COMPRESSED_ZLIB, _) => a }((provide(EncodingTypes.COMPRESSED_ZLIB) :: zlib(list(shortChannelIdWithChecksumsCodec))).as[EncodedShortChannelIdsWithChecksums])
+
+  val replyChannelRangeWithChecksumsCodec: Codec[ReplyChannelRangeWithChecksums] = (
+    ("chainHash" | binarydata(32)) ::
+      ("firstBlockNum" | uint32) ::
+      ("numberOfBlocks" | uint32) ::
+      ("complete" | byte) ::
+      ("data" | variableSizeBytes(uint16, channelRangeWithChecksumsDataCodec))
+    ).as[ReplyChannelRangeWithChecksums]
 
   val lightningMessageCodec = discriminated[LightningMessage].by(uint16)
     .typecase(16, initCodec)
@@ -381,11 +455,14 @@ object LightningMessageCodecs {
     .typecase(263, queryChannelRangeCodec)
     .typecase(264, replyChannelRangeCodec)
     .typecase(265, gossipTimestampFilterCodec)
-    .typecase(1001, queryShortChannelIdsExCodec)
-    .typecase(1002, replyShortChanelIdsEndExCodec)
-    .typecase(1003, queryChannelRangeExCodec)
-    .typecase(1004, replyChannelRangeExCodec)
-
+    .typecase(1001, queryShortChannelIdsDeprecatedCodec)
+    .typecase(1002, replyShortChanelIdsEndDeprecatedCodec)
+    .typecase(1003, queryChannelRangeDeprecatedCodec)
+    .typecase(1004, replyChannelRangeDeprecatedCodec)
+    .typecase(1011, queryShortChannelIdsWithFlagsCodec)
+    .typecase(1012, replyShortChannelIdsWithFlagsEndCodec)
+    .typecase(1013, queryChannelRangeWithChecksumsCodec)
+    .typecase(1014, replyChannelRangeWithChecksumsCodec)
 
   /**
     * A codec that caches serialized routing messages

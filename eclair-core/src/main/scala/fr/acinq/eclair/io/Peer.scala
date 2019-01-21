@@ -57,7 +57,7 @@ class Peer(nodeParams: NodeParams, remoteNodeId: PublicKey, authenticator: Actor
   }
 
   when(DISCONNECTED) {
-    case Event(Peer.Connect(NodeURI(_, address)), d: DisconnectedData) =>
+    case Event(Peer.Connect(NodeURI(_, address)), _) =>
       // even if we are in a reconnection loop, we immediately process explicit connection requests
       context.actorOf(Client.props(nodeParams, authenticator, new InetSocketAddress(address.getHost, address.getPort), remoteNodeId, origin_opt = Some(sender())))
       stay
@@ -105,40 +105,45 @@ class Peer(nodeParams: NodeParams, remoteNodeId: PublicKey, authenticator: Actor
       val remoteHasInitialRoutingSync = Features.hasFeature(remoteInit.localFeatures, Features.INITIAL_ROUTING_SYNC_BIT_OPTIONAL)
       val remoteHasChannelRangeQueriesOptional = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_BIT_OPTIONAL)
       val remoteHasChannelRangeQueriesMandatory = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_BIT_MANDATORY)
-      val remoteHasChannelRangeQueriesExOptional = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_EX_BIT_OPTIONAL)
-      val remoteHasChannelRangeQueriesExMandatory = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_EX_BIT_MANDATORY)
-      val localHasChannelRangeQueriesOptional = Features.hasFeature(d.localInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_BIT_OPTIONAL)
-      val localHasChannelRangeQueriesMandatory = Features.hasFeature(d.localInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_BIT_MANDATORY)
-      val localHasChannelRangeQueriesExOptional = Features.hasFeature(d.localInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_EX_BIT_OPTIONAL)
-      val localHasChannelRangeQueriesExMandatory = Features.hasFeature(d.localInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_EX_BIT_MANDATORY)
-      log.info(s"$remoteNodeId has features: initialRoutingSync=$remoteHasInitialRoutingSync channelRangeQueriesOptional=$remoteHasChannelRangeQueriesOptional channelRangeQueriesMandatory=$remoteHasChannelRangeQueriesMandatory")
+      val remoteHasChannelRangeQueriesDeprecatedOptional = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_DEPRECATED_BIT_OPTIONAL)
+      val remoteHasChannelRangeQueriesDeprecatedMandatory = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_DEPRECATED_BIT_MANDATORY)
+      val remoteHasChannelRangeQueriesExtendedOptional = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_EXTENDED_BIT_OPTIONAL)
+      val remoteHasChannelRangeQueriesExtendedMandatory = Features.hasFeature(remoteInit.localFeatures, Features.CHANNEL_RANGE_QUERIES_EXTENDED_BIT_MANDATORY)
+
+      log.info(s"peer has globalFeatures=${remoteInit.globalFeatures} localFeatures=${remoteInit.localFeatures}: initialRoutingSync=$remoteHasInitialRoutingSync channelRangeQueriesOptional=$remoteHasChannelRangeQueriesOptional channelRangeQueriesMandatory=$remoteHasChannelRangeQueriesMandatory")
       if (Features.areSupported(remoteInit.localFeatures)) {
         d.origin_opt.foreach(origin => origin ! "connected")
 
         if (remoteHasInitialRoutingSync) {
-          if (remoteHasChannelRangeQueriesExOptional || remoteHasChannelRangeQueriesExMandatory) {
+          if (remoteHasChannelRangeQueriesExtendedOptional || remoteHasChannelRangeQueriesExtendedMandatory) {
             // if they support extended channel queries we do nothing, they will send us their filters
-            log.info("{} has set initial routing sync and support extended channel range queries, we do nothing (they will send us a query)", remoteNodeId)
+            log.info("peer has set initial routing sync and supports extended channel range queries, we do nothing (they will send us a query)")
+          } else if (remoteHasChannelRangeQueriesDeprecatedOptional || remoteHasChannelRangeQueriesDeprecatedMandatory) {
+            // if they support extended channel queries we do nothing, they will send us their filters
+            log.info("peer has set initial routing sync and supports deprecated channel range queries, we do nothing (they will send us a query)")
           } else if (remoteHasChannelRangeQueriesOptional || remoteHasChannelRangeQueriesMandatory) {
             // if they support channel queries we do nothing, they will send us their filters
-            log.info("{} has set initial routing sync and support channel range queries, we do nothing (they will send us a query)", remoteNodeId)
+            log.info("peer has set initial routing sync and supports channel range queries, we do nothing (they will send us a query)")
           } else {
             // "old" nodes, do as before
             router ! GetRoutingState
           }
         }
-        // TODO: this is a hack for the Android version: don't send queries if we advertise that we don't support them
-        if ((localHasChannelRangeQueriesExOptional || localHasChannelRangeQueriesExMandatory) && (remoteHasChannelRangeQueriesExOptional || remoteHasChannelRangeQueriesExMandatory)) {
+
+        if (remoteHasChannelRangeQueriesExtendedOptional || remoteHasChannelRangeQueriesExtendedMandatory) {
           // if they support extended channel queries, always ask for their filter
-          router ! SendChannelQueryEx(remoteNodeId, d.transport)
-        } else if ((localHasChannelRangeQueriesOptional || localHasChannelRangeQueriesMandatory) && (remoteHasChannelRangeQueriesOptional || remoteHasChannelRangeQueriesMandatory)) {
+          router ! SendChannelQueryWithChecksums(remoteNodeId, d.transport)
+        } else if (remoteHasChannelRangeQueriesDeprecatedOptional || remoteHasChannelRangeQueriesDeprecatedMandatory) {
+          // if they support proto channel queries, always ask for their filter
+          router ! SendChannelQueryDeprecated(remoteNodeId, d.transport)
+        } else if (remoteHasChannelRangeQueriesOptional || remoteHasChannelRangeQueriesMandatory) {
           // if they support channel queries, always ask for their filter
           router ! SendChannelQuery(remoteNodeId, d.transport)
         }
 
         // let's bring existing/requested channels online
         d.channels.values.toSet[ActorRef].foreach(_ ! INPUT_RECONNECTED(d.transport, d.localInit, remoteInit)) // we deduplicate with toSet because there might be two entries per channel (tmp id and final id)
-        goto(CONNECTED) using ConnectedData(d.address_opt, d.transport, d.localInit, remoteInit, d.channels.map { case (k: ChannelId, v) => (k, v) })
+        goto(CONNECTED) using ConnectedData(d.address_opt, d.transport, d.localInit, remoteInit, d.channels.map { case (k: ChannelId, v) => (k, v) }) forMax(30 seconds) // forMax will trigger a StateTimeout
       } else {
         log.warning(s"incompatible features, disconnecting")
         d.origin_opt.foreach(origin => origin ! Status.Failure(new RuntimeException("incompatible features")))
@@ -171,18 +176,36 @@ class Peer(nodeParams: NodeParams, remoteNodeId: PublicKey, authenticator: Actor
   }
 
   when(CONNECTED) {
+    case Event(StateTimeout, _: ConnectedData) =>
+      // the first ping is sent after the connection has been quiet for a while
+      // we don't want to send pings right after connection, because peer will be syncing and may not be able to
+      // answer to our ping quickly enough, which will make us close the connection
+      log.debug(s"no messages sent/received for a while, start sending pings")
+      self ! SendPing
+      setStateTimeout(CONNECTED, None) // cancels the state timeout (it will be reset with forMax)
+      stay
+
     case Event(SendPing, d: ConnectedData) =>
-      // no need to use secure random here
-      val pingSize = Random.nextInt(1000)
-      val pongSize = Random.nextInt(1000)
-      val ping = wire.Ping(pongSize, BinaryData("00" * pingSize))
-      setTimer(PingTimeout.toString, PingTimeout(ping), 10 seconds, repeat = false)
-      d.transport ! ping
-      stay using d.copy(expectedPong_opt = Some(ExpectedPong(ping)))
+      if (d.expectedPong_opt.isEmpty) {
+        // no need to use secure random here
+        val pingSize = Random.nextInt(1000)
+        val pongSize = Random.nextInt(1000)
+        val ping = wire.Ping(pongSize, BinaryData("00" * pingSize))
+        setTimer(PingTimeout.toString, PingTimeout(ping), nodeParams.pingTimeout, repeat = false)
+        d.transport ! ping
+        stay using d.copy(expectedPong_opt = Some(ExpectedPong(ping)))
+      } else {
+        log.warning(s"can't send ping, already have one in flight")
+        stay
+      }
 
     case Event(PingTimeout(ping), d: ConnectedData) =>
-      log.warning(s"no response to ping=$ping, closing connection")
-      d.transport ! PoisonPill
+      if (nodeParams.pingDisconnect) {
+        log.warning(s"no response to ping=$ping, closing connection")
+        d.transport ! PoisonPill
+      } else {
+        log.warning(s"no response to ping=$ping (ignored)")
+      }
       stay
 
     case Event(ping@wire.Ping(pongLength, _), d: ConnectedData) =>
@@ -203,7 +226,9 @@ class Peer(nodeParams: NodeParams, remoteNodeId: PublicKey, authenticator: Actor
           val latency = Platform.currentTime - timestamp
           log.debug(s"received pong with latency=$latency")
           cancelTimer(PingTimeout.toString())
-          schedulePing()
+          // pings are sent periodically with some randomization
+          val nextDelay = nodeParams.pingInterval + secureRandom.nextInt(10).seconds
+          setTimer(SendPing.toString, SendPing, nextDelay, repeat = false)
         case None =>
           log.debug(s"received unexpected pong with size=${data.length}")
       }
@@ -427,12 +452,15 @@ class Peer(nodeParams: NodeParams, remoteNodeId: PublicKey, authenticator: Actor
     case Event(SendPing, _) => stay // we got disconnected in the meantime
 
     case Event(_: Pong, _) => stay // we got disconnected before receiving the pong
+
+    case Event(_: PingTimeout, _) => stay // we got disconnected after sending a ping
+
+    case Event(_: Terminated, _) => stay // this channel got closed before having a commitment and we got disconnected (e.g. a funding error occured)
   }
 
   onTransition {
     case _ -> DISCONNECTED if nodeParams.autoReconnect && nextStateData.address_opt.isDefined => setTimer(RECONNECT_TIMER, Reconnect, 1 second, repeat = false)
     case DISCONNECTED -> _ if nodeParams.autoReconnect && stateData.address_opt.isDefined => cancelTimer(RECONNECT_TIMER)
-    case _ -> CONNECTED => schedulePing()
   }
 
   def createNewChannel(nodeParams: NodeParams, funder: Boolean, fundingSatoshis: Long, origin_opt: Option[ActorRef]): (ActorRef, LocalParams) = {
@@ -454,12 +482,6 @@ class Peer(nodeParams: NodeParams, remoteNodeId: PublicKey, authenticator: Actor
   initialize()
 
   override def mdc(currentMessage: Any): MDC = Logs.mdc(remoteNodeId_opt = Some(remoteNodeId))
-
-  def schedulePing(): Unit = {
-    // pings are periodically with some randomization
-    val nextDelay = nodeParams.pingInterval + secureRandom.nextInt(10).seconds
-    setTimer(SendPing.toString, SendPing, nextDelay, repeat = false)
-  }
 
 }
 

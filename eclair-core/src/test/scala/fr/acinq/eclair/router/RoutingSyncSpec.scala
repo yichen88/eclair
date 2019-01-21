@@ -12,6 +12,7 @@ import fr.acinq.eclair.router.BaseRouterSpec.channelAnnouncement
 import fr.acinq.eclair.wire._
 import org.scalatest.FunSuiteLike
 
+import scala.compat.Platform
 import scala.concurrent.duration._
 
 
@@ -36,30 +37,32 @@ class RoutingSyncSpec extends TestKit(ActorSystem("test")) with FunSuiteLike {
     sender.expectMsgType[GossipTimestampFilter]
 
     // split our answer in 3 blocks
-    val List(block1) = ChannelRangeQueries.encodeShortChannelIds(firstBlockNum, numberOfBlocks, shortChannelIds.take(100), ChannelRangeQueries.UNCOMPRESSED_FORMAT)
-    val List(block2) = ChannelRangeQueries.encodeShortChannelIds(firstBlockNum, numberOfBlocks, shortChannelIds.drop(100).take(100), ChannelRangeQueries.UNCOMPRESSED_FORMAT)
-    val List(block3) = ChannelRangeQueries.encodeShortChannelIds(firstBlockNum, numberOfBlocks, shortChannelIds.drop(200).take(150), ChannelRangeQueries.UNCOMPRESSED_FORMAT)
+    val block1 = ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, 1, EncodedShortChannelIds(EncodingTypes.UNCOMPRESSED, shortChannelIds.take(100).toList))
+    val block2 = ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, 1, EncodedShortChannelIds(EncodingTypes.UNCOMPRESSED, shortChannelIds.drop(100).take(100).toList))
 
     // send first block
-    sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, ReplyChannelRange(chainHash, block1.firstBlock, block1.numBlocks, 1, block1.shortChannelIds)))
+    sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, block1))
     // router should ask for our first block of ids
-    val QueryShortChannelIds(_, data1) = transport.expectMsgType[QueryShortChannelIds]
-    val (_, shortChannelIds1, false) = ChannelRangeQueries.decodeShortChannelIds(data1)
-    assert(shortChannelIds1 == shortChannelIds.take(100))
+    assert(transport.expectMsgType[QueryShortChannelIds] === QueryShortChannelIds(chainHash, block1.data))
 
     // send second block
-    sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, ReplyChannelRange(chainHash, block2.firstBlock, block2.numBlocks, 1, block2.shortChannelIds)))
+    sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, block2))
+
+    // router should not ask for more ids, it already has a pending query !
+    sender.expectNoMsg(1 second)
 
     // send the first 50 items
-    shortChannelIds1.take(50).foreach(id => {
+    block1.data.array.take(50).foreach(id => {
       val (ca, cu1, cu2, _, _) = fakeRoutingInfo(id)
       sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, ca))
       sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, cu1))
       sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, cu2))
     })
 
+    sender.expectNoMsg(1 second)
+
     // send the last 50 items
-    shortChannelIds1.drop(50).foreach(id => {
+    block1.data.array.drop(50).foreach(id => {
       val (ca, cu1, cu2, _, _) = fakeRoutingInfo(id)
       sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, ca))
       sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, cu1))
@@ -73,9 +76,7 @@ class RoutingSyncSpec extends TestKit(ActorSystem("test")) with FunSuiteLike {
     sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, ReplyShortChannelIdsEnd(chainHash, 1.toByte)))
 
     // router should ask for our second block of ids
-    val QueryShortChannelIds(_, data2) = transport.expectMsgType[QueryShortChannelIds]
-    val (_, shortChannelIds2, false) = ChannelRangeQueries.decodeShortChannelIds(data2)
-    assert(shortChannelIds2 == shortChannelIds.drop(100).take(100))
+    assert(transport.expectMsgType[QueryShortChannelIds] === QueryShortChannelIds(chainHash, block2.data))
   }
 
   test("reset sync state on reconnection") {
@@ -91,16 +92,16 @@ class RoutingSyncSpec extends TestKit(ActorSystem("test")) with FunSuiteLike {
     val QueryChannelRange(chainHash, firstBlockNum, numberOfBlocks) = sender.expectMsgType[QueryChannelRange]
     sender.expectMsgType[GossipTimestampFilter]
 
-    val List(block1) = ChannelRangeQueries.encodeShortChannelIds(firstBlockNum, numberOfBlocks, shortChannelIds.take(100), ChannelRangeQueries.UNCOMPRESSED_FORMAT)
+    val block1 = ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, 1, EncodedShortChannelIds(EncodingTypes.UNCOMPRESSED, shortChannelIds.take(100).toList))
 
     // send first block
-    sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, ReplyChannelRange(chainHash, block1.firstBlock, block1.numBlocks, 1, block1.shortChannelIds)))
+    sender.send(router, PeerRoutingMessage(transport.ref, remoteNodeId, block1))
 
     // router should ask for our first block of ids
-    val QueryShortChannelIds(_, data1) = transport.expectMsgType[QueryShortChannelIds]
-    // router should think that it is mssing 100 channels
+    assert(transport.expectMsgType[QueryShortChannelIds] === QueryShortChannelIds(chainHash, block1.data))
+    // router should think that it is missing 100 channels, in one request
     val Some(sync) = router.stateData.sync.get(remoteNodeId)
-    assert(sync.totalMissingCount == 100)
+    assert(sync.total == 1)
 
     // simulate a re-connection
     sender.send(router, SendChannelQuery(remoteNodeId, sender.ref))
@@ -112,14 +113,28 @@ class RoutingSyncSpec extends TestKit(ActorSystem("test")) with FunSuiteLike {
 
 
 object RoutingSyncSpec {
+  val (priv_a, priv_b, priv_funding_a, priv_funding_b) = (randomKey, randomKey, randomKey, randomKey)
+  val (priv1, priv2) = if (Announcements.isNode1(priv_a.publicKey.toBin, priv_b.publicKey.toBin))
+    (priv_a, priv_b)
+  else
+    (priv_b, priv_a)
+
   def makeFakeRoutingInfo(shortChannelId: ShortChannelId): (ChannelAnnouncement, ChannelUpdate, ChannelUpdate, NodeAnnouncement, NodeAnnouncement) = {
-    val (priv_a, priv_b, priv_funding_a, priv_funding_b) = (randomKey, randomKey, randomKey, randomKey)
+    val timestamp = Platform.currentTime / 1000
     val channelAnn_ab = channelAnnouncement(shortChannelId, priv_a, priv_b, priv_funding_a, priv_funding_b)
     val TxCoordinates(blockHeight, _, _) = ShortChannelId.coordinates(shortChannelId)
-    val channelUpdate_ab = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_a, priv_b.publicKey, shortChannelId, cltvExpiryDelta = 7, 0, feeBaseMsat = 766000, feeProportionalMillionths = 10, 500000000L, timestamp = blockHeight)
-    val channelUpdate_ba = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_b, priv_a.publicKey, shortChannelId, cltvExpiryDelta = 7, 0, feeBaseMsat = 766000, feeProportionalMillionths = 10, 500000000L, timestamp = blockHeight)
+    val channelUpdate_ab = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_a, priv_b.publicKey, shortChannelId, cltvExpiryDelta = 7, 0, feeBaseMsat = 766000, feeProportionalMillionths = 10, 500000000L, timestamp = timestamp)
+    val channelUpdate_ba = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_b, priv_a.publicKey, shortChannelId, cltvExpiryDelta = 7, 0, feeBaseMsat = 766000, feeProportionalMillionths = 10, 500000000L, timestamp = timestamp)
     val nodeAnnouncement_a = makeNodeAnnouncement(priv_a, "a", Alice.nodeParams.color, List())
     val nodeAnnouncement_b = makeNodeAnnouncement(priv_b, "b", Bob.nodeParams.color, List())
     (channelAnn_ab, channelUpdate_ab, channelUpdate_ba, nodeAnnouncement_a, nodeAnnouncement_b)
+  }
+
+  def makeNewerChannelUpdate(channelUpdate: ChannelUpdate) : ChannelUpdate = {
+    val (priv, pub) = if (Announcements.isNode1(channelUpdate.channelFlags)) (priv1, priv2.publicKey) else (priv2, priv1.publicKey)
+    makeChannelUpdate(channelUpdate.chainHash, priv, pub, channelUpdate.shortChannelId,
+      channelUpdate.cltvExpiryDelta, channelUpdate.htlcMinimumMsat,
+      channelUpdate.feeBaseMsat, channelUpdate.feeProportionalMillionths,
+      channelUpdate.htlcMinimumMsat, Announcements.isEnabled(channelUpdate.channelFlags), channelUpdate.timestamp + 5000)
   }
 }
