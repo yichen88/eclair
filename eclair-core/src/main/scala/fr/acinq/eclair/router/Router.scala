@@ -79,8 +79,7 @@ case class Sync(pending: List[RoutingMessage], total: Int) {
     * @return returns a sync progress indicator (1 means fully synced)
     */
   def progress: Double = {
-    val inflight = pending.size *  1.0
-    if (total == 0) 1.0 else inflight / total
+    if (total == 0) 1.0 else ((1.0 - pending.size) / total)
   }
 }
 
@@ -502,7 +501,13 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
           ShortChannelIdAndFlag(channelInfo.shortChannelId, flag.toByte)
         }
         .filter(_.flag != 0)
-      log.info("received reply_channel_range_with_checksums, we're missing {} channel announcements/updates, format={}", shortChannelIdAndFlags.size, data.encoding)
+      val (channelCount, updatesCount) = shortChannelIdAndFlags.foldLeft((0, 0)) {
+        case ((c, u), ShortChannelIdAndFlag(_, flag)) =>
+          val c1 = c + (if (FlagTypes.includeAnnouncement(flag)) 1 else 0)
+          val u1 = u + (if (FlagTypes.includeUpdate1(flag)) 1 else 0) + (if (FlagTypes.includeUpdate2(flag)) 1 else 0)
+        (c1, u1)
+      }
+      log.info("received reply_channel_range_with_checksums with {} channels, we're missing {} channel announcements and {} updates, format={}", data.array.size, channelCount, updatesCount, data.encoding)
       // we update our sync data to this node (there may be multiple channel range responses and we can only query one set of ids at a time)
       val replies = shortChannelIdAndFlags
         .grouped(SHORTID_WINDOW)
@@ -519,7 +524,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
         val last = ShortChannelId((firstBlockNum + numberOfBlocks).toInt, 0xFFFFFFFF, 0xFFFF)
         // channel ids are sorted so we can simplify our range check
         val shortChannelIds = d.channels.keySet.dropWhile(_ < first).takeWhile(_ <= last) -- data.array.map(_.shortChannelId).toSet
-        log.info("we have {} channel that they do not have", shortChannelIds.size)
+        log.info("we have {} channel that they do not have between block {} and block {}", shortChannelIds.size, first, last)
         d.channels.filterKeys(id => shortChannelIds.contains(id))
       }
 
@@ -887,7 +892,7 @@ object Router {
         syncMap.get(remoteNodeId) match {
           case None =>
             // we don't have a pending query with this peer, let's send it
-            (syncMap + (remoteNodeId -> Sync(rest, pending.size)), Some(head))
+            (syncMap + (remoteNodeId -> Sync(rest, 1 + pending.size)), Some(head))
           case Some(sync) =>
             // we already have a pending query with this peer, add missing ids to our "sync" state
             (syncMap + (remoteNodeId -> Sync(sync.pending ++ pending, sync.total + pending.size)), None)
