@@ -505,7 +505,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
         case ((c, u), ShortChannelIdAndFlag(_, flag)) =>
           val c1 = c + (if (FlagTypes.includeAnnouncement(flag)) 1 else 0)
           val u1 = u + (if (FlagTypes.includeUpdate1(flag)) 1 else 0) + (if (FlagTypes.includeUpdate2(flag)) 1 else 0)
-        (c1, u1)
+          (c1, u1)
       }
       log.info("received reply_channel_range_with_checksums with {} channels, we're missing {} channel announcements and {} updates, format={}", data.array.size, channelCount, updatesCount, data.encoding)
       // we update our sync data to this node (there may be multiple channel range responses and we can only query one set of ids at a time)
@@ -524,7 +524,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
         val last = ShortChannelId((firstBlockNum + numberOfBlocks).toInt, 0xFFFFFFFF, 0xFFFF)
         // channel ids are sorted so we can simplify our range check
         val shortChannelIds = d.channels.keySet.dropWhile(_ < first).takeWhile(_ <= last) -- data.array.map(_.shortChannelId).toSet
-        log.info("we have {} channel that they do not have between block {} and block {}", shortChannelIds.size, first, last)
+        log.info("we have {} channels that they do not have between block {} and block {}", shortChannelIds.size, first, last)
         d.channels.filterKeys(id => shortChannelIds.contains(id))
       }
 
@@ -723,6 +723,26 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
     d.copy(sync = sync1)
   }
 
+  def handleChannelQuery[T](d: Data, transport: ActorRef, items: Iterable[T], id: T => ShortChannelId, sendChannel: T => Boolean, sendUpdate1: T => Boolean, sendUpdate2: T => Boolean): (Int, Int) = {
+    items.foldLeft((0, 0)) {
+      case ((c, u), item) =>
+        var c1 = c
+        var u1 = u
+        val shortChannelId = id(item)
+        d.channels.get(shortChannelId) match {
+          case None => log.warning("received query for shortChannelId={} that we don't have", shortChannelId)
+          case Some(ca) =>
+            if (sendChannel(item)) {
+              transport ! ca
+              c1 = c1 + 1
+            }
+            if (sendUpdate1(item)) d.updates.get(ChannelDesc(ca.shortChannelId, ca.nodeId1, ca.nodeId2)).foreach { u => transport ! u; u1 = u1 + 1 }
+            if (sendUpdate2(item)) d.updates.get(ChannelDesc(ca.shortChannelId, ca.nodeId2, ca.nodeId1)).foreach { u => transport ! u; u1 = u1 + 1 }
+        }
+        (c1, u1)
+    }
+  }
+
   override def mdc(currentMessage: Any): MDC = currentMessage match {
     case SendChannelQuery(remoteNodeId, _) => Logs.mdc(remoteNodeId_opt = Some(remoteNodeId))
     case PeerRoutingMessage(_, remoteNodeId, _) => Logs.mdc(remoteNodeId_opt = Some(remoteNodeId))
@@ -877,11 +897,11 @@ object Router {
       .grouped(2000) // LN messages must fit in 65 Kb so we split ids into groups to make sure that the output message will be valid
       .toList
       .map { group =>
-      // NB: group is never empty
-      val firstBlock: Long = ShortChannelId.coordinates(group.head).blockHeight.toLong
-      val numBlocks: Long = ShortChannelId.coordinates(group.last).blockHeight.toLong
-      ShortChannelIdsChunk(firstBlock, numBlocks, group.toList)
-    }
+        // NB: group is never empty
+        val firstBlock: Long = ShortChannelId.coordinates(group.head).blockHeight.toLong
+        val numBlocks: Long = ShortChannelId.coordinates(group.last).blockHeight.toLong
+        ShortChannelIdsChunk(firstBlock, numBlocks, group.toList)
+      }
   }
 
   def updateSync(syncMap: Map[PublicKey, Sync], remoteNodeId: PublicKey, pending: List[RoutingMessage]): (Map[PublicKey, Sync], Option[RoutingMessage]) = {
@@ -935,7 +955,7 @@ object Router {
 
     val foundRoutes = Graph.yenKshortestPaths(g, localNodeId, targetNodeId, amountMsat, ignoredEdges, extraEdges, numRoutes).toList match {
       case Nil => throw RouteNotFound
-      case route :: Nil  if route.path.isEmpty => throw RouteNotFound
+      case route :: Nil if route.path.isEmpty => throw RouteNotFound
       case foundRoutes => foundRoutes
     }
 
@@ -943,7 +963,7 @@ object Router {
     val minimumCost = foundRoutes.head.weight
 
     // routes paying at most minimumCost + 10%
-    val eligibleRoutes = foundRoutes.filter(_.weight  <= (minimumCost + minimumCost * DEFAULT_ALLOWED_SPREAD).round)
+    val eligibleRoutes = foundRoutes.filter(_.weight <= (minimumCost + minimumCost * DEFAULT_ALLOWED_SPREAD).round)
     Random.shuffle(eligibleRoutes).head.path.map(graphEdgeToHop)
   }
 }
