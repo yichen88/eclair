@@ -143,7 +143,7 @@ object Graph {
     if (!graphVerticesWithExtra.contains(sourceNode)) return Seq.empty
     if (!graphVerticesWithExtra.contains(targetNode)) return Seq.empty
 
-    val maxMapSize = graphVerticesWithExtra.size + 1
+    val maxMapSize = 100 // conservative estimation to avoid over allocating memory
 
     // this is not the actual optimal size for the maps, because we only put in there all the vertices in the worst case scenario.
     val cost = new java.util.HashMap[PublicKey, Long](maxMapSize)
