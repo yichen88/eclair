@@ -42,7 +42,7 @@ class GraphBenchmark {
 	//for akka ask pattern
 	implicit val timeout = Timeout(10 seconds)
 
-	val mainnetDbFolder = new File("./mainnetdb-14122018")
+	val mainnetDbFolder = new File("./mainnetdb-29012019")
 	val akkaConf = ConfigFactory.parseString(rawAkkConf).resolve()
 
 	implicit val system = ActorSystem.create("bench-actor-system", config = akkaConf)
