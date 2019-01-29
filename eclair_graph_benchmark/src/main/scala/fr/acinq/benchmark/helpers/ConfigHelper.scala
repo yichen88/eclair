@@ -97,6 +97,9 @@ object ConfigHelper {
 			   router-init-timeout = 5 minutes
 			 
 			   ping-interval = 30 seconds
+         ping-timeout = 30 seconds // will disconnect if peer takes longer than that to respond
+			   ping-disconnect = true
+
 			   auto-reconnect = true
 			 
 			   payment-handler = "local"
@@ -104,6 +107,7 @@ object ConfigHelper {
 			   max-pending-payment-requests = 10000000
 			   max-payment-fee = 0.03 // max total fee for outgoing payments, in percentage: sending a payment will not be attempted if the cheapest route found is more expensive than that
 			   min-funding-satoshis = 100000
+         autoprobe-count = 0
 			 }
 		""".stripMargin
 

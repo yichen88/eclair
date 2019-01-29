@@ -2,6 +2,7 @@ package fr.acinq.benchmark
 
 import java.io.File
 
+import akka.Done
 import akka.actor.{Actor, ActorSystem, Props}
 import akka.pattern.ask
 import akka.util.Timeout
@@ -63,7 +64,7 @@ class GraphBenchmark {
 	val keyManager = new LocalKeyManager(seed = randomKey.toBin, chainHash = Block.LivenetGenesisBlock.hash)
 	val params = NodeParams.makeNodeParams(mainnetDbFolder, eclairConf.getConfig("eclair"), keyManager)
 
-	val routerInitialized = Promise[Unit]()
+	val routerInitialized = Promise[Done]()
 	val router = system.actorOf(Router.props(params, noopActor, Some(routerInitialized)))
 	Await.result(routerInitialized.future, 10 seconds)
 
@@ -72,7 +73,7 @@ class GraphBenchmark {
 	@Benchmark
 	@BenchmarkMode(value = Array(Mode.AverageTime))
 	def routerLoadingTime(): Any = {
-		val routerInitializedBench = Promise[Unit]()
+		val routerInitializedBench = Promise[Done]()
 		system.actorOf(Router.props(params, noopActor, Some(routerInitializedBench)))
 		Await.result(routerInitializedBench.future, 10 seconds)
 	}
