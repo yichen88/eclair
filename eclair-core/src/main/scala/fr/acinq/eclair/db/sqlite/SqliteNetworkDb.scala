@@ -108,8 +108,8 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
           features = null,
           chainHash = null,
           shortChannelId = ShortChannelId(rs.getLong("short_channel_id")),
-          nodeId1 = PublicKey(PublicKey(rs.getBytes("node_id_1")).value, compressed = true), // we read as uncompressed, and convert to compressed
-          nodeId2 = PublicKey(PublicKey(rs.getBytes("node_id_2")).value, compressed = true),
+          nodeId1 = PublicKey(PublicKey(rs.getBytes("node_id_1"), checkValid = false), compressed = true), // we read as uncompressed without validating the key, and convert to compressed
+          nodeId2 = PublicKey(PublicKey(rs.getBytes("node_id_2"), checkValid = false), compressed = true),
           bitcoinKey1 = null,
           bitcoinKey2 = null) -> (emptyTxid, zeroCapacity))
       }
