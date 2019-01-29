@@ -72,16 +72,7 @@ case class RoutingState(channels: Iterable[ChannelAnnouncement], updates: Iterab
 case class Stash(updates: Map[ChannelUpdate, Set[ActorRef]], nodes: Map[NodeAnnouncement, Set[ActorRef]])
 case class Rebroadcast(channels: Map[ChannelAnnouncement, Set[ActorRef]], updates: Map[ChannelUpdate, Set[ActorRef]], nodes: Map[NodeAnnouncement, Set[ActorRef]])
 
-case class Sync(pending: List[RoutingMessage], total: Int) {
-
-  /**
-    * NB: progress is in terms of requests, not individual channels
-    * @return returns a sync progress indicator (1 means fully synced)
-    */
-  def progress: Double = {
-    if (total == 0) 1.0 else ((1.0 - pending.size) / total)
-  }
-}
+case class Sync(pending: List[RoutingMessage], total: Int)
 
 case class Data(nodes: Map[PublicKey, NodeAnnouncement],
                 channels: SortedMap[ShortChannelId, ChannelAnnouncement],
@@ -414,7 +405,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
     case Event(PeerRoutingMessage(transport, remoteNodeId, routingMessage@ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, _, data)), d) =>
       sender ! TransportHandler.ReadAck(routingMessage)
       val theirShortChannelIds: SortedSet[ShortChannelId] = SortedSet(data.array: _*)
-      val ourShortChannelIds: SortedSet[ShortChannelId] = d.channels.keySet.filter(keep(firstBlockNum, numberOfBlocks, _, d.channels, d.updates))
+      val ourShortChannelIds: SortedSet[ShortChannelId] = d.channels.keySet.filter(keep(firstBlockNum, numberOfBlocks, _))
       val missing: SortedSet[ShortChannelId] = theirShortChannelIds -- ourShortChannelIds
       log.info("received reply_channel_range, we're missing {} channel announcements/updates, format={}", missing.size, data.encoding)
       // we update our sync data to this node (there may be multiple channel range responses and we can only query one set of ids at a time)
@@ -830,17 +821,28 @@ object Router {
   /**
     * Filters channels that we want to send to nodes asking for a channel range
     */
-  def keep(firstBlockNum: Long, numberOfBlocks: Long, id: ShortChannelId, channels: Map[ShortChannelId, ChannelAnnouncement], updates: Map[ChannelDesc, ChannelUpdate]): Boolean = {
+  def keep(firstBlockNum: Long, numberOfBlocks: Long, id: ShortChannelId): Boolean = {
     val TxCoordinates(height, _, _) = ShortChannelId.coordinates(id)
     height >= firstBlockNum && height <= (firstBlockNum + numberOfBlocks)
   }
 
-  def syncProgress(sync: Map[PublicKey, Sync]): SyncProgress =
-    if (sync.isEmpty) {
+  /**
+    * Returns overall progress on synchronization
+    *
+    * @param sync
+    * @return a sync progress indicator (1 means fully synced)
+    */
+  def syncProgress(sync: Map[PublicKey, Sync]): SyncProgress = {
+    //NB: progress is in terms of requests, not individual channels
+    val (pending, total) = sync.foldLeft((0, 0)) {
+      case ((p, t), (_, sync)) => (p + sync.pending.size, t + sync.total)
+    }
+    if (total == 0) {
       SyncProgress(1)
     } else {
-      SyncProgress(sync.values.map(_.progress).sum / sync.values.size)
+      SyncProgress((total - pending) / (1.0 * total))
     }
+  }
 
   /**
     * This method is used after a payment failed, and we want to exclude some nodes that we know are failing
