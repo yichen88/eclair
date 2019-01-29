@@ -519,7 +519,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
         val last = ShortChannelId((firstBlockNum + numberOfBlocks).toInt, 0xFFFFFFFF, 0xFFFF)
         // channel ids are sorted so we can simplify our range check
         val shortChannelIds = d.channels.keySet.dropWhile(_ < first).takeWhile(_ <= last) -- data.array.map(_.shortChannelId).toSet
-        log.info("we have {} channels that they do not have between block {} and block {}", shortChannelIds.size, first, last)
+        log.info("we have {} channels that they do not have between block {} and block {}", shortChannelIds.size, ShortChannelId.coordinates(first).blockHeight, ShortChannelId.coordinates(last).blockHeight)
         d.channels.filterKeys(id => shortChannelIds.contains(id))
       }
 
