@@ -22,6 +22,7 @@ JGRAPH: (master: 521aa8a)
 # Run complete. Total time: 00:07:19
 
 Benchmark                                   Mode  Cnt  Score   Error  Units
-GraphBenchmark.findPath                     avgt    2  0.014           s/op
-GraphBenchmark.findPathWithExtraChannels    avgt    2  0.077           s/op
-GraphBenchmark.findPathWithIgnoredChannels  avgt    2  0.114           s/op
+GraphBenchmark.findPath                     avgt    2  0.025           s/op
+GraphBenchmark.findPathWithExtraChannels    avgt    2  0.184           s/op
+GraphBenchmark.findPathWithIgnoredChannels  avgt    2  0.233           s/op
+GraphBenchmark.routerLoadingTime            avgt    2  5.313           s/op
