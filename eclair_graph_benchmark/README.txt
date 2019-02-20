@@ -2,7 +2,7 @@ Micro-benchmarking the eclair router
 
 
 To build the project run "mvn clean install"
-To run the benchmark use "java -jar target/benchmark.jar -f 1 -i 1" this is the simplest benchmark run, use -h to discover new options
+To run the benchmark use "java -jar target/benchmarks.jar -f 1 -i 2" this is the simplest benchmark run, use -h to discover new options
 
 
 Benchmarks ran against a routing table from 29/01/2019 (~23k channels, ~6k nodes)

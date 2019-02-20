@@ -62,7 +62,7 @@ class GraphBenchmark {
 	}))
 
 	val keyManager = new LocalKeyManager(seed = randomKey.toBin, chainHash = Block.LivenetGenesisBlock.hash)
-	val params = NodeParams.makeNodeParams(mainnetDbFolder, eclairConf.getConfig("eclair"), keyManager)
+	val params = NodeParams.makeNodeParams(mainnetDbFolder, eclairConf.getConfig("eclair"), keyManager, None)
 
 	val routerInitialized = Promise[Done]()
 	val router = system.actorOf(Router.props(params, noopActor, Some(routerInitialized)))
