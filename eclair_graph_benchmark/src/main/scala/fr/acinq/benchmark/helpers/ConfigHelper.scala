@@ -116,9 +116,9 @@ object ConfigHelper {
 			      init-timeout = 5 minutes
 			      // the values below will be used to perform route searching
 			      path-finding {
-			        max-route-length = 6         // max route length for the 'first pass', if none is found then a second pass is made with no limit
+			        max-route-length = 7         // max route length for the 'first pass', if none is found then a second pass is made with no limit
 			        max-cltv =  1008             // max acceptable cltv expiry for the payment (1008 ~ 1 week)
-			        fee-threshold-sat = 21       // if fee is below this value we skip the max-fee-pct check
+			        fee-threshold-sat = 1       // if fee is below this value we skip the max-fee-pct check
 			        max-fee-pct = 0.03           // route will be discarded if fee is above this value (in percentage relative to the total payment amount); doesn't apply if fee < fee-threshold-sat
 
 			        // channel 'weight' is computed with the following formula: channelFee * (cltvDelta * ratio-cltv + channelAge * ratio-channel-age + channelCapacity * ratio-channel-capacity)
