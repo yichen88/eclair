@@ -23,11 +23,7 @@ import fr.acinq.bitcoin.{Block, ByteVector32, Crypto, Satoshi}
 import fr.acinq.eclair.db.sqlite.SqliteNetworkDb
 import fr.acinq.eclair.db.sqlite.SqliteUtils._
 import fr.acinq.eclair.router.{Announcements, PublicChannel}
-<<<<<<< HEAD
-import fr.acinq.eclair.wire._
-=======
-import fr.acinq.eclair.wire.{Color, NodeAddress, Tor2}println
->>>>>>> rework-router-data
+import fr.acinq.eclair.wire.{Color, NodeAddress, Tor2, _}
 import fr.acinq.eclair.{ShortChannelId, randomBytes32, randomKey}
 import org.scalatest.FunSuite
 
