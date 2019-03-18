@@ -21,7 +21,6 @@ import java.util.zip.Adler32
 import akka.Done
 import akka.actor.{ActorRef, Props, Status}
 import akka.event.Logging.MDC
-import fr.acinq.bitcoin.{ByteVector32, Satoshi}
 import fr.acinq.bitcoin.Crypto.PublicKey
 import fr.acinq.bitcoin.{ByteVector32, Satoshi}
 import fr.acinq.eclair._
@@ -29,12 +28,10 @@ import fr.acinq.eclair.blockchain._
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.TransportHandler
 import fr.acinq.eclair.io.Peer.{InvalidSignature, PeerRoutingMessage}
-import fr.acinq.eclair.io.Peer.{ChannelClosed, InvalidAnnouncement, InvalidSignature, PeerRoutingMessage}
 import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
 import fr.acinq.eclair.router.Graph.GraphStructure.DirectedGraph.graphEdgeToHop
 import fr.acinq.eclair.router.Graph.GraphStructure.{DirectedGraph, GraphEdge}
 import fr.acinq.eclair.router.Graph.{RichWeight, WeightRatios}
-import fr.acinq.eclair.transactions.Scripts
 import fr.acinq.eclair.wire._
 import scodec.bits.ByteVector
 import shapeless.HNil
@@ -163,7 +160,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
     log.info("loading network announcements from db...")
     // On Android, we discard the node announcements
     val channels = db.listChannels()
-    log.info("loaded from db: channels={} nodes={}", channels.size)
+    log.info("loaded from db: channels={} nodes={}", channels.size, 0)
     val initChannels = channels
     // this will be used to calculate routes
     val graph = DirectedGraph.makeGraph(initChannels)
@@ -433,7 +430,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
           }))
         .toList
       val (sync1, replynow_opt) = updateSync(d.sync, remoteNodeId, replies)
-      // we only send a rely right away if there were no pending requests
+      // we only send a reply right away if there were no pending requests
       replynow_opt.foreach(transport ! _)
       context.system.eventStream.publish(syncProgress(sync1))
 
@@ -470,7 +467,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
       })
 
       val graph1 = d.graph.removeEdges(staleChannelsToRemove)
-      stay using d.copy(channels = channels1, graph = graph1)
+      stay using d.copy(channels = channels1, graph = graph1, sync = sync1)
 
     case Event(PeerRoutingMessage(transport, _, routingMessage@QueryShortChannelIds(chainHash, shortChannelIds, queryFlags_opt)), d) =>
       sender ! TransportHandler.ReadAck(routingMessage)
