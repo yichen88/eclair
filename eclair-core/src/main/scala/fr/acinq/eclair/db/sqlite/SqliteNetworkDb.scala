@@ -18,31 +18,59 @@ package fr.acinq.eclair.db.sqlite
 
 import java.sql.Connection
 
-import fr.acinq.bitcoin.{ByteVector32, Crypto, Satoshi}
 import fr.acinq.bitcoin.Crypto.PublicKey
+import fr.acinq.bitcoin.{ByteVector32, Crypto, Satoshi}
 import fr.acinq.eclair.ShortChannelId
 import fr.acinq.eclair.db.NetworkDb
-import fr.acinq.eclair.router.Announcements
+import fr.acinq.eclair.router.PublicChannel
 import fr.acinq.eclair.wire.LightningMessageCodecs.nodeAnnouncementCodec
 import fr.acinq.eclair.wire.{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement}
+import grizzled.slf4j.Logging
 import scodec.bits.ByteVector
 
-import scala.collection.immutable.Queue
+import scala.collection.immutable.SortedMap
 
-class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
+class SqliteNetworkDb(sqlite: Connection) extends NetworkDb with Logging {
 
   import SqliteUtils._
+  import SqliteUtils.ExtendedResultSet._
 
   val DB_NAME = "network"
-  val CURRENT_VERSION = 1
+  val CURRENT_VERSION = 2
 
   using(sqlite.createStatement()) { statement =>
-    require(getVersion(statement, DB_NAME, CURRENT_VERSION) == CURRENT_VERSION) // there is only one version currently deployed
-    statement.execute("PRAGMA foreign_keys = ON")
+    getVersion(statement, DB_NAME, CURRENT_VERSION) match {
+      case 1 =>
+        // channel_update are cheap to retrieve, so let's just wipe them out and they'll get resynced
+        statement.execute("PRAGMA foreign_keys = ON")
+        logger.warn("migrating network db version 1->2")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_timestamp INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_message_flags BLOB NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_channel_flags BLOB NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_cltv_expiry_delta INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_htlc_minimum_msat INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_fee_base_msat INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_fee_proportional_millionths INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_1_htlc_maximum_msat INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_timestamp INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_message_flags BLOB NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_channel_flags BLOB NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_cltv_expiry_delta INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_htlc_minimum_msat INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_fee_base_msat INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_fee_proportional_millionths INTEGER NULL")
+        statement.executeUpdate("ALTER TABLE channels ADD COLUMN update_2_htlc_maximum_msat INTEGER NULL")
+        statement.executeUpdate("DROP TABLE channel_updates")
+        statement.execute("PRAGMA foreign_keys = OFF")
+        setVersion(statement, DB_NAME, CURRENT_VERSION)
+        logger.warn("migration complete")
+      case 2 => () // nothing to do
+      case unknown => throw new IllegalArgumentException(s"unknown version $unknown for network db")
+    }
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS nodes (node_id BLOB NOT NULL PRIMARY KEY, data BLOB NOT NULL)")
-    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channels (short_channel_id INTEGER NOT NULL PRIMARY KEY, node_id_1 BLOB NOT NULL, node_id_2 BLOB NOT NULL)")
-    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channel_updates (short_channel_id INTEGER NOT NULL, node_flag INTEGER NOT NULL, timestamp INTEGER NOT NULL, flags BLOB NOT NULL, cltv_expiry_delta INTEGER NOT NULL, htlc_minimum_msat INTEGER NOT NULL, fee_base_msat INTEGER NOT NULL, fee_proportional_millionths INTEGER NOT NULL, htlc_maximum_msat INTEGER, PRIMARY KEY(short_channel_id, node_flag), FOREIGN KEY(short_channel_id) REFERENCES channels(short_channel_id))")
-    statement.executeUpdate("CREATE INDEX IF NOT EXISTS channel_updates_idx ON channel_updates(short_channel_id)")
+    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channels (short_channel_id INTEGER NOT NULL PRIMARY KEY, node_id_1 BLOB NOT NULL, node_id_2 BLOB NOT NULL, " +
+      "update_1_timestamp INTEGER NULL, update_1_message_flags BLOB NULL, update_1_channel_flags BLOB NULL, update_1_cltv_expiry_delta INTEGER NULL, update_1_htlc_minimum_msat INTEGER NULL, update_1_fee_base_msat INTEGER NULL, update_1_fee_proportional_millionths INTEGER NULL, update_1_htlc_maximum_msat INTEGER NULL, " +
+      "update_2_timestamp INTEGER NULL, update_2_message_flags BLOB NULL, update_2_channel_flags BLOB NULL, update_2_cltv_expiry_delta INTEGER NULL, update_2_htlc_minimum_msat INTEGER NULL, update_2_fee_base_msat INTEGER NULL, update_2_fee_proportional_millionths INTEGER NULL, update_2_htlc_maximum_msat INTEGER NULL)")
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS pruned (short_channel_id INTEGER NOT NULL PRIMARY KEY)")
   }
 
@@ -77,7 +105,7 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
   }
 
   override def addChannel(c: ChannelAnnouncement, txid: ByteVector32, capacity: Satoshi): Unit = {
-    using(sqlite.prepareStatement("INSERT OR IGNORE INTO channels VALUES (?, ?, ?)")) { statement =>
+    using(sqlite.prepareStatement("INSERT OR IGNORE INTO channels VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)")) { statement =>
       statement.setLong(1, c.shortChannelId.toLong)
       statement.setBytes(2, c.nodeId1.value.toBin(false).toArray) // we store uncompressed public keys
       statement.setBytes(3, c.nodeId2.value.toBin(false).toArray)
@@ -85,30 +113,28 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
     }
   }
 
-  override def removeChannels(shortChannelIds: Iterable[ShortChannelId]): Unit = {
-
-    def removeChannelsInternal(shortChannelIds: Iterable[ShortChannelId]): Unit = {
-      val ids = shortChannelIds.map(_.toLong).mkString(",")
-      using(sqlite.createStatement) { statement =>
-        statement.execute("BEGIN TRANSACTION")
-        statement.executeUpdate(s"DELETE FROM channel_updates WHERE short_channel_id IN ($ids)")
-        statement.executeUpdate(s"DELETE FROM channels WHERE short_channel_id IN ($ids)")
-        statement.execute("COMMIT TRANSACTION")
-      }
+  override def updateChannel(u: ChannelUpdate): Unit = {
+    val columnPrefix = if (u.isNode1) "update_1" else "update_2"
+    using(sqlite.prepareStatement(s"UPDATE channels SET ${columnPrefix}_timestamp=?, ${columnPrefix}_message_flags=?, ${columnPrefix}_channel_flags=?, ${columnPrefix}_cltv_expiry_delta=?, ${columnPrefix}_htlc_minimum_msat=?, ${columnPrefix}_fee_base_msat=?, ${columnPrefix}_fee_proportional_millionths=?, ${columnPrefix}_htlc_maximum_msat=? WHERE short_channel_id=?")) { statement =>
+      statement.setLong(1, u.timestamp)
+      statement.setByte(2, u.messageFlags)
+      statement.setByte(3, u.channelFlags)
+      statement.setInt(4, u.cltvExpiryDelta)
+      statement.setLong(5, u.htlcMinimumMsat)
+      statement.setLong(6, u.feeBaseMsat)
+      statement.setLong(7, u.feeProportionalMillionths)
+      setNullableLong(statement, 8, u.htlcMaximumMsat)
+      statement.setLong(9, u.shortChannelId.toLong)
+      statement.executeUpdate()
     }
-
-    // remove channels by batch of 1000
-    shortChannelIds.grouped(1000).foreach(removeChannelsInternal)
   }
 
-  override def listChannels(): Map[ChannelAnnouncement, (ByteVector32, Satoshi)] = {
+  override def listChannels(): SortedMap[ShortChannelId, PublicChannel] = {
     using(sqlite.createStatement()) { statement =>
       val rs = statement.executeQuery("SELECT * FROM channels")
-      var m: Map[ChannelAnnouncement, (ByteVector32, Satoshi)] = Map()
-      val emptyTxid = ByteVector32.Zeroes
-      val zeroCapacity = Satoshi(0)
+      var m = SortedMap.empty[ShortChannelId, PublicChannel]
       while (rs.next()) {
-        m = m + (ChannelAnnouncement(
+        val ann = ChannelAnnouncement(
           nodeSignature1 = null,
           nodeSignature2 = null,
           bitcoinSignature1 = null,
@@ -119,61 +145,43 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
           nodeId1 = PublicKey(PublicKey(ByteVector.view(rs.getBytes("node_id_1")), checkValid = false).value, compressed = true), // we read as uncompressed, and convert to compressed, and we don't check the validity it was already checked before
           nodeId2 = PublicKey(PublicKey(ByteVector.view(rs.getBytes("node_id_2")), checkValid = false).value, compressed = true),
           bitcoinKey1 = null,
-          bitcoinKey2 = null) -> (emptyTxid, zeroCapacity))
+          bitcoinKey2 = null)
+        val txId = ByteVector32.Zeroes
+        val capacity = Satoshi(0)
+
+        def getChannelUpdate(columnPrefix: String): Option[ChannelUpdate] = {
+          if (rs.getNullableLong(s"${columnPrefix}_timestamp").isDefined) {
+            Some(ChannelUpdate(
+              signature = null,
+              chainHash = null,
+              shortChannelId = ShortChannelId(rs.getLong("short_channel_id")),
+              timestamp = rs.getLong(s"${columnPrefix}_timestamp"),
+              messageFlags = rs.getByte(s"${columnPrefix}_message_flags"),
+              channelFlags = rs.getByte(s"${columnPrefix}_channel_flags"),
+              cltvExpiryDelta = rs.getInt(s"${columnPrefix}_cltv_expiry_delta"),
+              htlcMinimumMsat = rs.getLong(s"${columnPrefix}_htlc_minimum_msat"),
+              feeBaseMsat = rs.getLong(s"${columnPrefix}_fee_base_msat"),
+              feeProportionalMillionths = rs.getLong(s"${columnPrefix}_fee_proportional_millionths"),
+              htlcMaximumMsat = rs.getNullableLong(s"${columnPrefix}_htlc_maximum_msat")))
+          } else None
+        }
+
+        val channel_update_1_opt = getChannelUpdate("update_1")
+        val channel_update_2_opt = getChannelUpdate("update_2")
+        m = m + (ann.shortChannelId -> PublicChannel(ann, txId, capacity, channel_update_1_opt, channel_update_2_opt))
       }
       m
     }
   }
 
-  override def addChannelUpdate(u: ChannelUpdate): Unit = {
-    using(sqlite.prepareStatement("INSERT OR IGNORE INTO channel_updates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) { statement =>
-      statement.setLong(1, u.shortChannelId.toLong)
-      statement.setBoolean(2, Announcements.isNode1(u.channelFlags))
-      statement.setLong(3, u.timestamp)
-      statement.setBytes(4, Array(u.messageFlags, u.channelFlags))
-      statement.setInt(5, u.cltvExpiryDelta)
-      statement.setLong(6, u.htlcMinimumMsat)
-      statement.setLong(7, u.feeBaseMsat)
-      statement.setLong(8, u.feeProportionalMillionths)
-      setNullableLong(statement, 9, u.htlcMaximumMsat)
-      statement.executeUpdate()
-    }
-  }
-
-  override def updateChannelUpdate(u: ChannelUpdate): Unit = {
-    using(sqlite.prepareStatement("UPDATE channel_updates SET timestamp=?, flags=?, cltv_expiry_delta=?, htlc_minimum_msat=?, fee_base_msat=?, fee_proportional_millionths=?, htlc_maximum_msat=? WHERE short_channel_id=? AND node_flag=?")) { statement =>
-      statement.setLong(1, u.timestamp)
-      statement.setBytes(2, Array(u.messageFlags, u.channelFlags))
-      statement.setInt(3, u.cltvExpiryDelta)
-      statement.setLong(4, u.htlcMinimumMsat)
-      statement.setLong(5, u.feeBaseMsat)
-      statement.setLong(6, u.feeProportionalMillionths)
-      setNullableLong(statement, 7, u.htlcMaximumMsat)
-      statement.setLong(8, u.shortChannelId.toLong)
-      statement.setBoolean(9, Announcements.isNode1(u.channelFlags))
-      statement.executeUpdate()
-    }
-  }
-
-  override def listChannelUpdates(): Seq[ChannelUpdate] = {
-    using(sqlite.createStatement()) { statement =>
-      val rs = statement.executeQuery("SELECT * FROM channel_updates")
-      var q: Queue[ChannelUpdate] = Queue()
-      while (rs.next()) {
-        q = q :+ ChannelUpdate(
-          signature = null,
-          chainHash = null,
-          shortChannelId = ShortChannelId(rs.getLong("short_channel_id")),
-          timestamp = rs.getLong("timestamp"),
-          messageFlags = rs.getBytes("flags")(0),
-          channelFlags = rs.getBytes("flags")(1),
-          cltvExpiryDelta = rs.getInt("cltv_expiry_delta"),
-          htlcMinimumMsat = rs.getLong("htlc_minimum_msat"),
-          feeBaseMsat = rs.getLong("fee_base_msat"),
-          feeProportionalMillionths = rs.getLong("fee_proportional_millionths"),
-          htlcMaximumMsat = getNullableLong(rs, "htlc_maximum_msat"))
+  override def removeChannels(shortChannelIds: Iterable[ShortChannelId]): Unit = {
+    using(sqlite.createStatement) { statement =>
+      shortChannelIds
+        .grouped(1000) // remove channels by batch of 1000
+        .foreach { group =>
+        val ids = shortChannelIds.map(_.toLong).mkString(",")
+        statement.executeUpdate(s"DELETE FROM channels WHERE short_channel_id IN ($ids)")
       }
-      q
     }
   }
 

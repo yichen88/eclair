@@ -60,6 +60,12 @@ object SqliteUtils {
     res.getInt("version")
   }
 
+  def setVersion(statement: Statement, db_name: String, currentVersion: Int) = {
+    statement.executeUpdate("CREATE TABLE IF NOT EXISTS versions (db_name TEXT NOT NULL PRIMARY KEY, version INTEGER NOT NULL)")
+    // if there was no version for the current db, then insert the current version
+    statement.executeUpdate(s"INSERT OR IGNORE INTO versions VALUES ('$db_name', $currentVersion)")
+  }
+
   /**
     * This helper assumes that there is a "data" column available, decodable with the provided codec
     *
@@ -94,19 +100,6 @@ object SqliteUtils {
   }
 
   /**
-    * This helper retrieves the value from a nullable integer column and interprets it as an option. This is needed
-    * because `rs.getLong` would return `0` for a null value.
-    * It is used on Android only
-    *
-    * @param label
-    * @return
-    */
-  def getNullableLong(rs: ResultSet, label: String) : Option[Long] = {
-    val result = rs.getLong(label)
-    if (rs.wasNull()) None else Some(result)
-  }
-
-  /**
     * Obtain an exclusive lock on a sqlite database. This is useful when we want to make sure that only one process
     * accesses the database file (see https://www.sqlite.org/pragma.html).
     *
@@ -124,9 +117,24 @@ object SqliteUtils {
 
   case class ExtendedResultSet(rs: ResultSet) {
 
+    def getBitVectorOpt(columnLabel: String): Option[BitVector] = Option(rs.getBytes(columnLabel)).map(BitVector(_))
+
     def getByteVector(columnLabel: String): ByteVector = ByteVector(rs.getBytes(columnLabel))
 
     def getByteVector32(columnLabel: String): ByteVector32 = ByteVector32(ByteVector(rs.getBytes(columnLabel)))
+
+    /**
+      * This helper retrieves the value from a nullable integer column and interprets it as an option. This is needed
+      * because `rs.getLong` would return `0` for a null value.
+      * It is used on Android only
+      *
+      * @param label
+      * @return
+      */
+    def getNullableLong(columnLabel: String) : Option[Long] = {
+      val result = rs.getLong(columnLabel)
+      if (rs.wasNull()) None else Some(result)
+    }
   }
 
   object ExtendedResultSet {

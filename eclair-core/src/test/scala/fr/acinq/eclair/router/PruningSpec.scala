@@ -58,8 +58,8 @@ class PruningSpec extends TestkitBaseClass with BeforeAndAfterAll {
     routingInfoA.map {
       case (a, u1, u2, n1, n2) =>
         paramsA.networkDb.addChannel(a, txid, Satoshi(100000))
-        paramsA.networkDb.addChannelUpdate(u1)
-        paramsA.networkDb.addChannelUpdate(u2)
+        paramsA.networkDb.updateChannel(u1)
+        paramsA.networkDb.updateChannel(u2)
         paramsA.networkDb.addNode(n1)
         paramsA.networkDb.addNode(n2)
     }
