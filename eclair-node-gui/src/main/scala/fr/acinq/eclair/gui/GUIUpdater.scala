@@ -135,6 +135,11 @@ class GUIUpdater(mainController: MainController) extends Actor with ActorLogging
       })
       context.become(main(m1))
 
+    case LocalCommitConfirmed(actor, remoteNodeId, channelId, refundAtBlock) if m.contains(actor) =>
+      log.info(s"got LocalCommitConfirmed for channel=$channelId with refundAtBlock=$refundAtBlock")
+      val channelController = m(actor)
+      runInGuiThread(() => channelController.updateRefundAtBlock(refundAtBlock))
+
     case NodesDiscovered(nodeAnnouncements) =>
       runInGuiThread { () =>
       nodeAnnouncements.foreach { nodeAnnouncement =>

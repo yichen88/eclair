@@ -22,16 +22,16 @@ import fr.acinq.bitcoin.MilliSatoshi
 import fr.acinq.eclair.CoinUtils
 import fr.acinq.eclair.channel.{CMD_CLOSE, CMD_FORCECLOSE, Commitments}
 import fr.acinq.eclair.gui.FxApp
+import fr.acinq.eclair.gui.utils.{ContextMenuUtils, CopyAction}
+import grizzled.slf4j.Logging
 import javafx.application.Platform
 import javafx.beans.value.{ChangeListener, ObservableValue}
+import javafx.event.{ActionEvent, EventHandler}
 import javafx.fxml.FXML
+import javafx.scene.control.Alert.AlertType
 import javafx.scene.control._
 import javafx.scene.input.{ContextMenuEvent, MouseEvent}
 import javafx.scene.layout.VBox
-import fr.acinq.eclair.gui.utils.{ContextMenuUtils, CopyAction}
-import grizzled.slf4j.Logging
-import javafx.event.{ActionEvent, EventHandler}
-import javafx.scene.control.Alert.AlertType
 
 /**
   * Created by DPA on 23/09/2016.
@@ -48,6 +48,8 @@ class ChannelPaneController(val channelRef: ActorRef, val peerNodeId: String) ex
   @FXML var nodeId: TextField = _
   @FXML var state: TextField = _
   @FXML var funder: TextField = _
+  @FXML var refundAtBlockLabel: Label = _
+  @FXML var refundAtBlockValue: TextField = _
   @FXML var close: Button = _
   @FXML var forceclose: Button = _
 
@@ -136,6 +138,12 @@ class ChannelPaneController(val channelRef: ActorRef, val peerNodeId: String) ex
   def refreshBalance(): Unit = {
     amountUs.setText(s"${CoinUtils.formatAmountInUnit(balance, FxApp.getUnit)} / ${CoinUtils.formatAmountInUnit(capacity, FxApp.getUnit, withUnit = true)}")
     balanceBar.setProgress(balance.amount.toDouble / capacity.amount)
+  }
+
+  def updateRefundAtBlock(refundAtBlock: Long): Unit = {
+    refundAtBlockValue.setText(s"At block #$refundAtBlock")
+    refundAtBlockLabel.setVisible(true)
+    refundAtBlockValue.setVisible(true)
   }
 
   def getBalance: MilliSatoshi = balance
