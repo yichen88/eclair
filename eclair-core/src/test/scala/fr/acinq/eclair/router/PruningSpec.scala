@@ -82,31 +82,31 @@ class PruningSpec extends TestkitBaseClass with BeforeAndAfterAll {
     test(routerA)
   }
 
-  test("prune stale channel") {
-    router => {
-      val probe = TestProbe()
-      probe.ignoreMsg { case TransportHandler.ReadAck(_) => true }
-      val remoteNodeId = PrivateKey(ByteVector.fromValidHex("01" * 32)).publicKey
-
-      // tell router to ask for our channel ids
-      probe.send(router, SendChannelQuery(remoteNodeId, probe.ref))
-      val QueryChannelRange(chainHash, firstBlockNum, numberOfBlocks) = probe.expectMsgType[QueryChannelRange]
-      probe.expectMsgType[GossipTimestampFilter]
-
-      // we don't send the first 10 channels, which are stale
-      val shortChannelIds1 = shortChannelIds.drop(10)
-      val reply = ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, 1.toByte, ChannelRangeQueries.encodeShortChannelIdsSingle(shortChannelIds1, ChannelRangeQueries.ZLIB_FORMAT, false))
-      probe.send(router, PeerRoutingMessage(probe.ref, remoteNodeId, reply))
-
-      // router should see that it has 10 channels that we don't have, check if they're stale, and prune them
-      awaitCond({
-        probe.send(router, 'channels)
-        val channels = probe.expectMsgType[Iterable[ChannelAnnouncement]]
-        val ourIds = channels.map(_.shortChannelId).toSet
-        ourIds == shortChannelIds1
-      }, max = 30 seconds)
-    }
-  }
+//  test("prune stale channel") {
+//    router => {
+//      val probe = TestProbe()
+//      probe.ignoreMsg { case TransportHandler.ReadAck(_) => true }
+//      val remoteNodeId = PrivateKey(ByteVector.fromValidHex("01" * 32)).publicKey
+//
+//      // tell router to ask for our channel ids
+//      probe.send(router, SendChannelQuery(remoteNodeId, probe.ref))
+//      val QueryChannelRange(chainHash, firstBlockNum, numberOfBlocks) = probe.expectMsgType[QueryChannelRange]
+//      probe.expectMsgType[GossipTimestampFilter]
+//
+//      // we don't send the first 10 channels, which are stale
+//      val shortChannelIds1 = shortChannelIds.drop(10)
+//      val reply = ReplyChannelRange(chainHash, firstBlockNum, numberOfBlocks, 1.toByte, ChannelRangeQueries.encodeShortChannelIdsSingle(shortChannelIds1, ChannelRangeQueries.ZLIB_FORMAT, false))
+//      probe.send(router, PeerRoutingMessage(probe.ref, remoteNodeId, reply))
+//
+//      // router should see that it has 10 channels that we don't have, check if they're stale, and prune them
+//      awaitCond({
+//        probe.send(router, 'channels)
+//        val channels = probe.expectMsgType[Iterable[ChannelAnnouncement]]
+//        val ourIds = channels.map(_.shortChannelId).toSet
+//        ourIds == shortChannelIds1
+//      }, max = 30 seconds)
+//    }
+//  }
 }
 
 object PruningSpec {

@@ -230,66 +230,68 @@ case class PerHopPayload(shortChannelId: ShortChannelId,
                          amtToForward: Long,
                          outgoingCltvValue: Long)
 
-/**
-  *
-  * @param chainHash chain hash
-  * @param data prefix + list of short channel ids, where prefix specifies how the list is encoded
-  */
+// @formatter:off
+sealed trait EncodingType
+object EncodingType {
+  case object UNCOMPRESSED extends EncodingType
+  case object COMPRESSED_ZLIB extends EncodingType
+}
+// @formatter:on
+
+case object QueryFlagTypes {
+  val INCLUDE_CHANNEL_ANNOUNCEMENT: Byte = 1
+  val INCLUDE_CHANNEL_UPDATE_1: Byte = 2
+  val INCLUDE_CHANNEL_UPDATE_2: Byte = 4
+
+  def includeAnnouncement(flag: Byte) = (flag & QueryFlagTypes.INCLUDE_CHANNEL_ANNOUNCEMENT) != 0
+
+  def includeUpdate1(flag: Byte) = (flag & QueryFlagTypes.INCLUDE_CHANNEL_UPDATE_1) != 0
+
+  def includeUpdate2(flag: Byte) = (flag & QueryFlagTypes.INCLUDE_CHANNEL_UPDATE_2) != 0
+}
+
+case class EncodedShortChannelIds(encoding: EncodingType,
+                                  array: List[ShortChannelId])
+
+case class EncodedQueryFlags(encoding: EncodingType,
+                             array: List[Byte])
+
 case class QueryShortChannelIds(chainHash: ByteVector32,
-                                data: ByteVector) extends RoutingMessage with HasChainHash
-
-/**
-  *
-  * @param chainHash chain hash
-  * @param flag if flag == 1, don't send back channel announcements
-  * @param data prefix + list of short channel ids, where prefix specifies how the list is encoded
-  */
-case class QueryShortChannelIdsEx(chainHash: ByteVector32,
-                                  flag: Byte,
-                                  data: ByteVector) extends RoutingMessage with HasChainHash
-
-case class QueryChannelRange(chainHash: ByteVector32,
-                             firstBlockNum: Long,
-                             numberOfBlocks: Long) extends RoutingMessage with HasChainHash
-
-case class QueryChannelRangeEx(chainHash: ByteVector32,
-                              firstBlockNum: Long,
-                              numberOfBlocks: Long) extends RoutingMessage with HasChainHash
-
-/**
-  *
-  * @param chainHash chain hash
-  * @param firstBlockNum first block that is found in data
-  * @param numberOfBlocks number of blocks spanned by data
-  * @param complete
-  * @param data prefix + list of short channel ids, where prefix specifies how the list is encoded
-  */
-case class ReplyChannelRange(chainHash: ByteVector32,
-                             firstBlockNum: Long,
-                             numberOfBlocks: Long,
-                             complete: Byte,
-                             data: ByteVector) extends RoutingMessage with HasChainHash
-
-/**
-  *
-  * @param chainHash chain hash
-  * @param firstBlockNum first block that is found in data
-  * @param numberOfBlocks number of blocks spanned by data
-  * @param complete
-  * @param data prefix + list of (short channel id + timestamp) values, where prefix specifies how the list is encoded
-  */
-case class ReplyChannelRangeEx(chainHash: ByteVector32,
-                              firstBlockNum: Long,
-                              numberOfBlocks: Long,
-                              complete: Byte,
-                              data: ByteVector) extends RoutingMessage with HasChainHash
+                                shortChannelIds: EncodedShortChannelIds,
+                                queryFlags_opt: Option[EncodedQueryFlags]) extends RoutingMessage with HasChainHash
 
 case class ReplyShortChannelIdsEnd(chainHash: ByteVector32,
                                    complete: Byte) extends RoutingMessage with HasChainHash
 
-case class ReplyShortChannelIdsEndEx(chainHash: ByteVector32,
-                                    complete: Byte) extends RoutingMessage with HasChainHash
+// @formatter:off
+sealed trait ExtendedQueryFlags
+object ExtendedQueryFlags {
+  case object TIMESTAMPS_AND_CHECKSUMS extends ExtendedQueryFlags
+}
+// @formatter:on
+
+case class QueryChannelRange(chainHash: ByteVector32,
+                             firstBlockNum: Long,
+                             numberOfBlocks: Long,
+                             optionExtendedQueryFlags_opt: Option[ExtendedQueryFlags]) extends RoutingMessage with HasChainHash
+
+case class ReplyChannelRange(chainHash: ByteVector32,
+                             firstBlockNum: Long,
+                             numberOfBlocks: Long,
+                             complete: Byte,
+                             shortChannelIds: EncodedShortChannelIds,
+                             optionExtendedQueryFlags_opt: Option[ExtendedQueryFlags],
+                             extendedInfo_opt: Option[ExtendedInfo]) extends RoutingMessage with HasChainHash {
+  extendedInfo_opt.foreach(extendedInfo => require(shortChannelIds.array.size == extendedInfo.array.size, s"shortChannelIds.size=${shortChannelIds.array.size} != extendedInfo.size=${extendedInfo.array.size}"))
+}
 
 case class GossipTimestampFilter(chainHash: ByteVector32,
                                  firstTimestamp: Long,
                                  timestampRange: Long) extends RoutingMessage with HasChainHash
+
+case class TimestampsAndChecksums(timestamp1: Long,
+                                  checksum1: Long,
+                                  timestamp2: Long,
+                                  checksum2: Long)
+
+case class ExtendedInfo(array: List[TimestampsAndChecksums])
