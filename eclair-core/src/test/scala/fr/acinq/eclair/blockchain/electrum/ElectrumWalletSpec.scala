@@ -35,7 +35,6 @@ import org.scalatest.{BeforeAndAfterAll, FunSuiteLike}
 import scodec.bits.ByteVector
 
 import scala.concurrent.Await
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 
 
@@ -88,7 +87,8 @@ class ElectrumWalletSpec extends TestKit(ActorSystem("test")) with FunSuiteLike 
   }
 
   test("wait until wallet is ready") {
-    electrumClient = system.actorOf(Props(new ElectrumClientPool(Set(ElectrumServerAddress(new InetSocketAddress("localhost", 50001), SSL.OFF)))))
+
+    electrumClient = system.actorOf(Props(new ElectrumClientPool(Set(ElectrumServerAddress(new InetSocketAddress("localhost", 50001), SSL.OFF)))(scala.concurrent.ExecutionContext.Implicits.global)))
     wallet = system.actorOf(Props(new ElectrumWallet(seed, electrumClient, WalletParameters(Block.RegtestGenesisBlock.hash, new SqliteWalletDb(DriverManager.getConnection("jdbc:sqlite::memory:")), minimumFee = Satoshi(5000)))), "wallet")
     val probe = TestProbe()
     awaitCond({
@@ -157,7 +157,8 @@ class ElectrumWalletSpec extends TestKit(ActorSystem("test")) with FunSuiteLike 
         TxOut(amount, fr.acinq.eclair.addressToPublicKeyScript(address, Block.RegtestGenesisBlock.hash)),
         TxOut(amount, fr.acinq.eclair.addressToPublicKeyScript(address, Block.RegtestGenesisBlock.hash))
       ), lockTime = 0L)
-    val btcWallet = new BitcoinCoreWallet(bitcoinrpcclient)
+    val btcWallet = new BitcoinCoreWallet(bitcoinrpcclient)(scala.concurrent.ExecutionContext.Implicits.global)
+    //implicit val ec = global
     val future = for {
       FundTransactionResponse(tx1, pos, fee) <- btcWallet.fundTransaction(tx, false, 10000)
       SignTransactionResponse(tx2, true) <- btcWallet.signTransaction(tx1)

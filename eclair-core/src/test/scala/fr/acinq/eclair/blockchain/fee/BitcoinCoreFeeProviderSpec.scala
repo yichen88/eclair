@@ -119,7 +119,7 @@ class BitcoinCoreFeeProviderSpec extends TestKit(ActorSystem("test")) with Bitco
         case "estimatesmartfee" =>
           val blocks = params(0).asInstanceOf[Int]
           val feerate = satoshi2btc(Satoshi(fees(blocks))).amount
-          Future(JObject(List("feerate" -> JDecimal(feerate), "blocks" -> JInt(blocks))))
+          Future(JObject(List("feerate" -> JDecimal(feerate), "blocks" -> JInt(blocks))))(global)
         case _ => Future.failed(new RuntimeException(s"Test BasicBitcoinJsonRPCClient: method $method is not supported"))
       }
     }
