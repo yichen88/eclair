@@ -155,7 +155,7 @@ class Textui(kit: Kit) extends Logging {
         }
       })
       gui.addWindowAndWait(window)
-      kit.system.shutdown()
+      kit.system.terminate()
     }
   }
   new Thread(runnable).start()

@@ -20,11 +20,11 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>fr.acinq.eclair</groupId>
-        <artifactId>eclair_2.11</artifactId>
-        <version>0.2-android-SNAPSHOT</version>
+        <artifactId>eclair_2.12</artifactId>
+        <version>0.2-android-akka2.5-SNAPSHOT</version>
     </parent>
 
-    <artifactId>eclair-node_2.11</artifactId>
+    <artifactId>eclair-node_2.12</artifactId>
     <packaging>jar</packaging>
 
     <name>eclair-node</name>

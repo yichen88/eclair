@@ -102,7 +102,7 @@ class IntegrationSpec extends TestKit(ActorSystem("test")) with BitcoindService 
     nodes.foreach {
       case (name, setup) =>
         logger.info(s"stopping node $name")
-        setup.system.shutdown()
+        setup.system.terminate()
     }
   }
 

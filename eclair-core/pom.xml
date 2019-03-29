@@ -20,11 +20,11 @@
     <modelVersion>4.0.0</modelVersion>
     <parent>
         <groupId>fr.acinq.eclair</groupId>
-        <artifactId>eclair_2.11</artifactId>
-        <version>0.2-android-SNAPSHOT</version>
+        <artifactId>eclair_2.12</artifactId>
+        <version>0.2-android-akka2.5-SNAPSHOT</version>
     </parent>
 
-    <artifactId>eclair-core_2.11</artifactId>
+    <artifactId>eclair-core_2.12</artifactId>
     <packaging>jar</packaging>
 
     <name>${project.artifactId}</name>
@@ -145,7 +145,7 @@
         </dependency>
         <dependency>
             <groupId>com.lihaoyi</groupId>
-            <artifactId>upickle_2.11</artifactId>
+            <artifactId>upickle_${scala.version.short}</artifactId>
             <version>0.6.6</version>
         </dependency>
         <!-- TCP -->
